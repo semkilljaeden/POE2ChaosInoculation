@@ -27,6 +27,7 @@ import (
 )
 
 const snapshotsDir = "snapshots"
+const resourceDir = "resource"
 
 // ModRequirement defines what mod to look for
 type ModRequirement struct {
@@ -39,30 +40,30 @@ type ModRequirement struct {
 // Config for the crafter
 type Config struct {
 	ChaosPos            image.Point
-	ItemPos             image.Point      // Legacy: single item position (for backward compatibility)
-	ItemWidth           int              // Item width in cells (e.g., 1 for 1x1, 2 for 2x3)
-	ItemHeight          int              // Item height in cells (e.g., 1 for 1x1, 3 for 2x3)
-	TooltipOffset       image.Point      // Offset from ItemPos to tooltip top-left
-	TooltipSize         image.Point      // Width and height of tooltip
-	TooltipRect         image.Rectangle  `json:"-"` // Runtime only, calculated from ItemPos + Offset
-	BackpackTopLeft     image.Point      // Top-left corner of backpack grid
-	BackpackBottomRight image.Point      // Bottom-right corner of backpack grid
+	ItemPos             image.Point     // Legacy: single item position (for backward compatibility)
+	ItemWidth           int             // Item width in cells (e.g., 1 for 1x1, 2 for 2x3)
+	ItemHeight          int             // Item height in cells (e.g., 1 for 1x1, 3 for 2x3)
+	TooltipOffset       image.Point     // Offset from ItemPos to tooltip top-left
+	TooltipSize         image.Point     // Width and height of tooltip
+	TooltipRect         image.Rectangle `json:"-"` // Runtime only, calculated from ItemPos + Offset
+	BackpackTopLeft     image.Point     // Top-left corner of backpack grid
+	BackpackBottomRight image.Point     // Bottom-right corner of backpack grid
 
 	// Batch crafting areas
-	WorkbenchTopLeft    image.Point      // Top-left of workbench (exact match to item dimensions)
-	PendingAreaTopLeft  image.Point      // Top-left of pending items area
-	PendingAreaWidth    int              // Width of pending area in cells
-	PendingAreaHeight   int              // Height of pending area in cells
-	ResultAreaTopLeft   image.Point      // Top-left of result items area
-	ResultAreaWidth     int              // Width of result area in cells
-	ResultAreaHeight    int              // Height of result area in cells
-	UseBatchMode        bool             // Enable batch crafting workflow
+	WorkbenchTopLeft   image.Point // Top-left of workbench (exact match to item dimensions)
+	PendingAreaTopLeft image.Point // Top-left of pending items area
+	PendingAreaWidth   int         // Width of pending area in cells
+	PendingAreaHeight  int         // Height of pending area in cells
+	ResultAreaTopLeft  image.Point // Top-left of result items area
+	ResultAreaWidth    int         // Width of result area in cells
+	ResultAreaHeight   int         // Height of result area in cells
+	UseBatchMode       bool        // Enable batch crafting workflow
 
-	TargetMods          []ModRequirement // Support multiple target mods
-	MaxAttempts         int
-	Delay               time.Duration
-	Debug               bool
-	SaveAllSnapshots    bool // Save every attempt's screenshot
+	TargetMods       []ModRequirement // Support multiple target mods
+	ChaosPerRound    int              // Number of chaos orbs to use per item/round
+	Delay            time.Duration
+	Debug            bool
+	SaveAllSnapshots bool // Save every attempt's screenshot
 }
 
 // ModStat tracks statistics for a specific mod
@@ -75,15 +76,29 @@ type ModStat struct {
 	TotalValue int
 }
 
+// RoundResult tracks data for a single round/item
+type RoundResult struct {
+	RoundNumber   int
+	Success       bool
+	StartPos      image.Point
+	EndPos        image.Point
+	ModsFound     []string
+	TargetHit     bool
+	TargetModName string
+	TargetValue   int
+	ErrorMessage  string
+}
+
 // CraftingSession tracks all data during a crafting session
 type CraftingSession struct {
-	StartTime       time.Time
-	EndTime         time.Time
-	TotalRolls      int
-	ModStats        map[string]*ModStat // Key: mod name
-	TargetModHit    bool
-	TargetModName   string // Which target mod was found
-	TargetValue     int
+	StartTime     time.Time
+	EndTime       time.Time
+	TotalRolls    int
+	ModStats      map[string]*ModStat // Key: mod name
+	TargetModHit  bool
+	TargetModName string // Which target mod was found
+	TargetValue   int
+	RoundResults  []RoundResult // Track each individual round
 }
 
 // Global control flags with atomic access for thread safety
@@ -93,6 +108,7 @@ var (
 	pauseToggleCooldown atomic.Value // stores time.Time
 	lastPauseKeyState   atomic.Bool
 	snapshotCounter     atomic.Int32 // Sequential counter for snapshot naming
+	emptyCellReference  image.Image  // Reference image of empty cell for comparison
 )
 
 // Random delay to simulate human behavior (base ± variation in ms)
@@ -198,7 +214,8 @@ func setupWizard() Config {
 	config := Config{
 		ItemWidth:        1, // Default to 1x1 item
 		ItemHeight:       1,
-		MaxAttempts:      1000,
+		ChaosPerRound:    10,                    // Default 10 chaos orbs per item
+		UseBatchMode:     true,                  // Always use batch mode
 		Delay:            75 * time.Millisecond, // Very fast default delay
 		Debug:            false,
 		SaveAllSnapshots: false,
@@ -224,6 +241,18 @@ func setupWizard() Config {
 		} else {
 			fmt.Println("(none)")
 		}
+		fmt.Printf("  - Chaos per round: %d\n", prevConfig.ChaosPerRound)
+
+		// Display batch mode info (always enabled now)
+		fmt.Println("  - Batch Mode: ENABLED")
+		wbRow, wbCol := getGridCell(prevConfig, prevConfig.WorkbenchTopLeft.X, prevConfig.WorkbenchTopLeft.Y)
+		fmt.Printf("    • Workbench: cell (%d, %d)\n", wbRow, wbCol)
+		pRow, pCol := getGridCell(prevConfig, prevConfig.PendingAreaTopLeft.X, prevConfig.PendingAreaTopLeft.Y)
+		fmt.Printf("    • Pending area: cell (%d, %d) [%dx%d cells]\n",
+			pRow, pCol, prevConfig.PendingAreaWidth, prevConfig.PendingAreaHeight)
+		rRow, rCol := getGridCell(prevConfig, prevConfig.ResultAreaTopLeft.X, prevConfig.ResultAreaTopLeft.Y)
+		fmt.Printf("    • Result area: cell (%d, %d) [%dx%d cells]\n",
+			rRow, rCol, prevConfig.ResultAreaWidth, prevConfig.ResultAreaHeight)
 
 		// Quick start option
 		fmt.Print("\nAny modifications needed? (y/n, default n): ")
@@ -248,7 +277,7 @@ func setupWizard() Config {
 		config.ResultAreaHeight = prevConfig.ResultAreaHeight
 		config.UseBatchMode = prevConfig.UseBatchMode
 		config.TargetMods = prevConfig.TargetMods
-		config.MaxAttempts = prevConfig.MaxAttempts
+		config.ChaosPerRound = prevConfig.ChaosPerRound
 		config.Delay = prevConfig.Delay
 		config.Debug = prevConfig.Debug
 		config.SaveAllSnapshots = prevConfig.SaveAllSnapshots
@@ -259,6 +288,14 @@ func setupWizard() Config {
 		}
 		if config.ItemHeight == 0 {
 			config.ItemHeight = 1
+		}
+
+		// Ensure batch mode is always enabled (backward compatibility)
+		config.UseBatchMode = true
+
+		// Ensure chaos per round has a valid default
+		if config.ChaosPerRound == 0 {
+			config.ChaosPerRound = 10
 		}
 
 		if !needsMods {
@@ -328,7 +365,27 @@ func setupWizard() Config {
 				}
 			}
 
-			// 4. Logging and snapshots
+			// 4. Chaos per round
+			fmt.Print("\nUpdate chaos orbs per round? (y/n): ")
+			scanner.Scan()
+			if strings.ToLower(strings.TrimSpace(scanner.Text())) == "y" {
+				for {
+					fmt.Printf("Chaos orbs per round/item (current: %d, default 10): ", config.ChaosPerRound)
+					scanner.Scan()
+					input := strings.TrimSpace(scanner.Text())
+					if input == "" {
+						break // Keep current value
+					}
+					if n, err := strconv.Atoi(input); err == nil && n > 0 {
+						config.ChaosPerRound = n
+						fmt.Printf("✓ Chaos per round: %d\n", config.ChaosPerRound)
+						break
+					}
+					fmt.Println("❌ Invalid. Must be a positive number.")
+				}
+			}
+
+			// 5. Logging and snapshots
 			fmt.Print("\nUpdate logging/snapshot options? (y/n): ")
 			scanner.Scan()
 			if strings.ToLower(strings.TrimSpace(scanner.Text())) == "y" {
@@ -341,34 +398,11 @@ func setupWizard() Config {
 				config.SaveAllSnapshots = strings.ToLower(strings.TrimSpace(scanner.Text())) == "y"
 			}
 
-			// 5. Item position and dimensions
-			fmt.Print("\nUpdate item position/dimensions? (y/n): ")
+			// 6. Item dimensions
+			fmt.Print("\nUpdate item dimensions? (y/n): ")
 			scanner.Scan()
 			if strings.ToLower(strings.TrimSpace(scanner.Text())) == "y" {
-				fmt.Println("\n📍 Specify item position and dimensions:")
-				fmt.Println("Note: Specify the TOP-LEFT corner cell of the item")
-
-				var row, col int
-				for {
-					fmt.Print("Row (0-4): ")
-					scanner.Scan()
-					if r, err := strconv.Atoi(strings.TrimSpace(scanner.Text())); err == nil && r >= 0 && r < 5 {
-						row = r
-						break
-					}
-					fmt.Println("❌ Invalid. Must be 0-4.")
-				}
-				for {
-					fmt.Print("Col (0-11): ")
-					scanner.Scan()
-					if c, err := strconv.Atoi(strings.TrimSpace(scanner.Text())); err == nil && c >= 0 && c < 12 {
-						col = c
-						break
-					}
-					fmt.Println("❌ Invalid. Must be 0-11.")
-				}
-
-				// Ask for item dimensions
+				fmt.Println("\n📏 Item Dimensions:")
 				for {
 					fmt.Print("Item width in cells (1-12, default 1): ")
 					scanner.Scan()
@@ -397,19 +431,14 @@ func setupWizard() Config {
 					}
 					fmt.Println("❌ Invalid. Must be 1-5.")
 				}
-
-				// Calculate positions
-				config.ItemPos.X, config.ItemPos.Y = getCellCenter(config, row, col)
-				fmt.Printf("✓ Item at cell (%d,%d) [%dx%d cells] → pixel (%d, %d)\n",
-					row, col, config.ItemWidth, config.ItemHeight, config.ItemPos.X, config.ItemPos.Y)
+				fmt.Printf("✓ Item size: %dx%d cells\n", config.ItemWidth, config.ItemHeight)
 			}
 
-			// 6. Batch mode configuration
-			fmt.Print("\nConfigure batch crafting mode? (y/n): ")
+			// 7. Batch crafting areas (always enabled)
+			fmt.Print("\nUpdate batch crafting areas? (y/n): ")
 			scanner.Scan()
 			if strings.ToLower(strings.TrimSpace(scanner.Text())) == "y" {
-				config.UseBatchMode = true
-				fmt.Println("\n🔄 Batch Mode Configuration")
+				fmt.Println("\n🔄 Batch Crafting Areas")
 				fmt.Println("You'll specify:")
 				fmt.Println("  - Workbench: where items are crafted")
 				fmt.Println("  - Pending area: holds items waiting to be crafted")
@@ -522,8 +551,50 @@ func setupWizard() Config {
 					fmt.Println("  ❌ Invalid. Must be 1-5.")
 				}
 				fmt.Printf("✓ Result area: (%d,%d) size %dx%d\n", rRow, rCol, config.ResultAreaWidth, config.ResultAreaHeight)
-			} else {
-				config.UseBatchMode = false
+			}
+
+			// 8. Tooltip position
+			fmt.Print("\nUpdate tooltip position? (y/n): ")
+			scanner.Scan()
+			if strings.ToLower(strings.TrimSpace(scanner.Text())) == "y" {
+				fmt.Println("\n📝 Tooltip Configuration")
+				fmt.Println("Position mouse over item and use countdown to capture tooltip area")
+				fmt.Println("")
+
+				x1, y1 := captureWithCountdown("Tooltip TOP-LEFT corner")
+				x2, y2 := captureWithCountdown("Tooltip BOTTOM-RIGHT corner")
+
+				config.TooltipRect = image.Rectangle{
+					Min: image.Point{X: x1, Y: y1},
+					Max: image.Point{X: x2, Y: y2},
+				}
+
+				// Calculate offset and size (will be relative to workbench in batch mode)
+				refPos := config.WorkbenchTopLeft
+				if refPos.X == 0 && refPos.Y == 0 {
+					// Use backpack center as fallback
+					refPos = image.Point{
+						X: (config.BackpackTopLeft.X + config.BackpackBottomRight.X) / 2,
+						Y: (config.BackpackTopLeft.Y + config.BackpackBottomRight.Y) / 2,
+					}
+				}
+
+				config.TooltipOffset = image.Point{
+					X: x1 - refPos.X,
+					Y: y1 - refPos.Y,
+				}
+				config.TooltipSize = image.Point{
+					X: x2 - x1,
+					Y: y2 - y1,
+				}
+
+				fmt.Printf("✓ Tooltip: (%d, %d) to (%d, %d) [%dx%d]\n",
+					x1, y1, x2, y2, config.TooltipSize.X, config.TooltipSize.Y)
+			}
+
+			// Set ItemPos to workbench for batch mode, or keep existing for single mode
+			if config.UseBatchMode {
+				config.ItemPos = config.WorkbenchTopLeft
 			}
 		}
 
@@ -576,32 +647,8 @@ func setupWizard() Config {
 		config.ChaosPos.X, config.ChaosPos.Y = captureWithCountdown(
 			"Step 2a: Position for CHAOS ORB in stash")
 
-		// Get item position using cell coordinates
-		fmt.Println("\n📍 Specify item position and dimensions:")
-		fmt.Println("Note: Specify the TOP-LEFT corner cell of the item")
-
-		var row, col int
-		for {
-			fmt.Print("Enter row (0-4): ")
-			scanner.Scan()
-			if r, err := strconv.Atoi(strings.TrimSpace(scanner.Text())); err == nil && r >= 0 && r < 5 {
-				row = r
-				break
-			}
-			fmt.Println("❌ Invalid row. Must be 0-4.")
-		}
-
-		for {
-			fmt.Print("Enter column (0-11): ")
-			scanner.Scan()
-			if c, err := strconv.Atoi(strings.TrimSpace(scanner.Text())); err == nil && c >= 0 && c < 12 {
-				col = c
-				break
-			}
-			fmt.Println("❌ Invalid column. Must be 0-11.")
-		}
-
-		// Ask for item dimensions
+		// Step 2b: Item dimensions
+		fmt.Println("\n📏 Item Dimensions:")
 		for {
 			fmt.Print("Item width in cells (1-12, default 1): ")
 			scanner.Scan()
@@ -630,11 +677,126 @@ func setupWizard() Config {
 			}
 			fmt.Println("❌ Invalid. Must be 1-5.")
 		}
+		fmt.Printf("✓ Item size: %dx%d cells\n", config.ItemWidth, config.ItemHeight)
 
-		// Calculate item position from cell coordinates
-		config.ItemPos.X, config.ItemPos.Y = getCellCenter(config, row, col)
-		fmt.Printf("✓ Item at cell (%d,%d) [%dx%d cells] → pixel (%d, %d)\n",
-			row, col, config.ItemWidth, config.ItemHeight, config.ItemPos.X, config.ItemPos.Y)
+		// Step 2c: Batch mode configuration (always enabled)
+		fmt.Println("\n🔄 Batch Mode Configuration (always enabled)")
+		fmt.Println("You'll specify:")
+		fmt.Println("  - Workbench: where items are crafted")
+		fmt.Println("  - Pending area: holds items waiting to be crafted")
+		fmt.Println("  - Result area: holds finished items")
+
+		// Workbench
+		fmt.Println("\nWorkbench (exact match to item dimensions):")
+		var wbRow, wbCol int
+		for {
+			fmt.Print("  Workbench row (0-4): ")
+			scanner.Scan()
+			if r, err := strconv.Atoi(strings.TrimSpace(scanner.Text())); err == nil && r >= 0 && r < 5 {
+				wbRow = r
+				break
+			}
+			fmt.Println("  ❌ Invalid. Must be 0-4.")
+		}
+		for {
+			fmt.Print("  Workbench col (0-11): ")
+			scanner.Scan()
+			if c, err := strconv.Atoi(strings.TrimSpace(scanner.Text())); err == nil && c >= 0 && c < 12 {
+				wbCol = c
+				break
+			}
+			fmt.Println("  ❌ Invalid. Must be 0-11.")
+		}
+		config.WorkbenchTopLeft.X, config.WorkbenchTopLeft.Y = getCellCenter(config, wbRow, wbCol)
+		config.ItemPos = config.WorkbenchTopLeft
+		fmt.Printf("✓ Workbench at cell (%d,%d)\n", wbRow, wbCol)
+
+		// Pending area
+		fmt.Println("\nPending area (items waiting to be crafted):")
+		var pRow, pCol int
+		for {
+			fmt.Print("  Top-left row (0-4): ")
+			scanner.Scan()
+			if r, err := strconv.Atoi(strings.TrimSpace(scanner.Text())); err == nil && r >= 0 && r < 5 {
+				pRow = r
+				break
+			}
+			fmt.Println("  ❌ Invalid. Must be 0-4.")
+		}
+		for {
+			fmt.Print("  Top-left col (0-11): ")
+			scanner.Scan()
+			if c, err := strconv.Atoi(strings.TrimSpace(scanner.Text())); err == nil && c >= 0 && c < 12 {
+				pCol = c
+				break
+			}
+			fmt.Println("  ❌ Invalid. Must be 0-11.")
+		}
+		config.PendingAreaTopLeft.X, config.PendingAreaTopLeft.Y = getCellCenter(config, pRow, pCol)
+		for {
+			fmt.Print("  Width in cells (1-12): ")
+			scanner.Scan()
+			if w, err := strconv.Atoi(strings.TrimSpace(scanner.Text())); err == nil && w >= 1 && w <= 12 {
+				config.PendingAreaWidth = w
+				break
+			}
+			fmt.Println("  ❌ Invalid. Must be 1-12.")
+		}
+		for {
+			fmt.Print("  Height in cells (1-5): ")
+			scanner.Scan()
+			if h, err := strconv.Atoi(strings.TrimSpace(scanner.Text())); err == nil && h >= 1 && h <= 5 {
+				config.PendingAreaHeight = h
+				break
+			}
+			fmt.Println("  ❌ Invalid. Must be 1-5.")
+		}
+		fmt.Printf("✓ Pending area: (%d,%d) size %dx%d\n", pRow, pCol, config.PendingAreaWidth, config.PendingAreaHeight)
+
+		// Result area
+		fmt.Println("\nResult area (finished items):")
+		var rRow, rCol int
+		for {
+			fmt.Print("  Top-left row (0-4): ")
+			scanner.Scan()
+			if r, err := strconv.Atoi(strings.TrimSpace(scanner.Text())); err == nil && r >= 0 && r < 5 {
+				rRow = r
+				break
+			}
+			fmt.Println("  ❌ Invalid. Must be 0-4.")
+		}
+		for {
+			fmt.Print("  Top-left col (0-11): ")
+			scanner.Scan()
+			if c, err := strconv.Atoi(strings.TrimSpace(scanner.Text())); err == nil && c >= 0 && c < 12 {
+				rCol = c
+				break
+			}
+			fmt.Println("  ❌ Invalid. Must be 0-11.")
+		}
+		config.ResultAreaTopLeft.X, config.ResultAreaTopLeft.Y = getCellCenter(config, rRow, rCol)
+		for {
+			fmt.Print("  Width in cells (1-12): ")
+			scanner.Scan()
+			if w, err := strconv.Atoi(strings.TrimSpace(scanner.Text())); err == nil && w >= 1 && w <= 12 {
+				config.ResultAreaWidth = w
+				break
+			}
+			fmt.Println("  ❌ Invalid. Must be 1-12.")
+		}
+		for {
+			fmt.Print("  Height in cells (1-5): ")
+			scanner.Scan()
+			if h, err := strconv.Atoi(strings.TrimSpace(scanner.Text())); err == nil && h >= 1 && h <= 5 {
+				config.ResultAreaHeight = h
+				break
+			}
+			fmt.Println("  ❌ Invalid. Must be 1-5.")
+		}
+		fmt.Printf("✓ Result area: (%d,%d) size %dx%d\n", rRow, rCol, config.ResultAreaWidth, config.ResultAreaHeight)
+
+		// Set ItemPos to workbench for batch mode
+		config.ItemPos = config.WorkbenchTopLeft
 	}
 
 	fmt.Println("\n\nStep 3: Tooltip Area")
@@ -789,11 +951,11 @@ func setupWizard() Config {
 		fmt.Println("\n\nStep 5: Options")
 		fmt.Println("----------------")
 
-		fmt.Print("\nMax attempts (default 1000): ")
+		fmt.Print("\nChaos orbs per round/item (default 10): ")
 		scanner.Scan()
-		if attempts := scanner.Text(); attempts != "" {
-			if n, err := strconv.Atoi(attempts); err == nil && n > 0 {
-				config.MaxAttempts = n
+		if chaos := scanner.Text(); chaos != "" {
+			if n, err := strconv.Atoi(chaos); err == nil && n > 0 {
+				config.ChaosPerRound = n
 			}
 		}
 
@@ -865,25 +1027,25 @@ func parseModInput(input string) ModRequirement {
 		desc    string
 	}{
 		// Pattern explanation: (?:\(\d+-\d+\))? = optional range display like (165-179)
-		"life":           {`(?i)\+(\d+)(?:\(\d+-\d+\))?\s+TO\s+MAXIMUM\s+LIFE`, "Life %d+"},
-		"mana":           {`(?i)\+(\d+)(?:\(\d+-\d+\))?\s+TO\s+MAXIMUM\s+MANA`, "Mana %d+"},
-		"str":            {`(?i)\+(\d+)(?:\(\d+-\d+\))?\s+TO\s+STRENGTH`, "Strength %d+"},
-		"dex":            {`(?i)\+(\d+)(?:\(\d+-\d+\))?\s+TO\s+DEXTERITY`, "Dexterity %d+"},
-		"int":            {`(?i)\+(\d+)(?:\(\d+-\d+\))?\s+TO\s+INTELLIGENCE`, "Intelligence %d+"},
-		"spirit":         {`(?i)[+#]?(\d+)(?:\(\d+-\d+\))?\s+TO\s+SPIRIT`, "Spirit %d+"},
-		"spell-level":    {`\+(\d+)\s+TO\s+LEVEL\s+OF\s+ALL\s+SPELL\s+SKILLS`, "+%d to Level of all Spell Skills (or higher)"},
-		"proj-level":     {`\+(\d+)\s+TO\s+LEVEL\s+OF\s+ALL\s+PROJECTILE\s+SKILLS`, "+%d to Level of all Projectile Skills (or higher)"},
-		"crit-dmg":       {`(?i)(\d+)(?:\(\d+-\d+\))?%?\s*INCREASED\s+CRITICAL\s+DAMAGE\s+BONUS`, "%d%%+ increased Critical Damage Bonus"},
-		"fire-res":       {`(?i)(\d+)(?:\(\d+-\d+\))?%?\s*(?:INCREASED\s+)?FIRE\s+RESISTANCE`, "Fire Res %d+%%"},
-		"cold-res":       {`(?i)(\d+)(?:\(\d+-\d+\))?%?\s*(?:INCREASED\s+)?COLD\s+RESISTANCE`, "Cold Res %d+%%"},
-		"light-res":      {`(?i)(\d+)(?:\(\d+-\d+\))?%?\s*(?:INCREASED\s+)?LIGHTNING\s+RESISTANCE`, "Lightning Res %d+%%"},
-		"chaos-res":      {`(?i)(\d+)(?:\(\d+-\d+\))?%?\s*(?:INCREASED\s+)?CHAOS\s+RESISTANCE`, "Chaos Res %d+%%"},
-		"armor":          {`(?i)(\d+)(?:\(\d+-\d+\))?\s+(?:INCREASED\s+)?ARMOUR`, "Armour %d+"},
-		"evasion":        {`(?i)(\d+)(?:\(\d+-\d+\))?\s+(?:INCREASED\s+)?EVASION`, "Evasion %d+"},
-		"es":             {`(?i)\+(\d+)(?:\(\d+-\d+\))?\s+TO\s+MAXIMUM\s+ENERGY\s+SHIELD`, "Energy Shield %d+"},
-		"movespeed":      {`(?i)(\d+)(?:\(\d+-\d+\))?%?\s*(?:INCREASED\s+)?MOVEMENT\s+SPEED`, "Movement Speed %d+%%"},
-		"attackspeed":    {`(?i)(\d+)(?:\(\d+-\d+\))?%?\s*(?:INCREASED\s+)?ATTACK\s+SPEED`, "Attack Speed %d+%%"},
-		"castspeed":      {`(?i)(\d+)(?:\(\d+-\d+\))?%?\s*(?:INCREASED\s+)?CAST\s+SPEED`, "Cast Speed %d+%%"},
+		"life":        {`(?i)\+(\d+)(?:\(\d+-\d+\))?\s+TO\s+MAXIMUM\s+LIFE`, "Life %d+"},
+		"mana":        {`(?i)\+(\d+)(?:\(\d+-\d+\))?\s+TO\s+MAXIMUM\s+MANA`, "Mana %d+"},
+		"str":         {`(?i)\+(\d+)(?:\(\d+-\d+\))?\s+TO\s+STRENGTH`, "Strength %d+"},
+		"dex":         {`(?i)\+(\d+)(?:\(\d+-\d+\))?\s+TO\s+DEXTERITY`, "Dexterity %d+"},
+		"int":         {`(?i)\+(\d+)(?:\(\d+-\d+\))?\s+TO\s+INTELLIGENCE`, "Intelligence %d+"},
+		"spirit":      {`(?i)[+#]?(\d+)(?:\(\d+-\d+\))?\s+TO\s+SPIRIT`, "Spirit %d+"},
+		"spell-level": {`\+(\d+)\s+TO\s+LEVEL\s+OF\s+ALL\s+SPELL\s+SKILLS`, "+%d to Level of all Spell Skills (or higher)"},
+		"proj-level":  {`\+(\d+)\s+TO\s+LEVEL\s+OF\s+ALL\s+PROJECTILE\s+SKILLS`, "+%d to Level of all Projectile Skills (or higher)"},
+		"crit-dmg":    {`(?i)(\d+)(?:\(\d+-\d+\))?%?\s*INCREASED\s+CRITICAL\s+DAMAGE\s+BONUS`, "%d%%+ increased Critical Damage Bonus"},
+		"fire-res":    {`(?i)(\d+)(?:\(\d+-\d+\))?%?\s*(?:INCREASED\s+)?FIRE\s+RESISTANCE`, "Fire Res %d+%%"},
+		"cold-res":    {`(?i)(\d+)(?:\(\d+-\d+\))?%?\s*(?:INCREASED\s+)?COLD\s+RESISTANCE`, "Cold Res %d+%%"},
+		"light-res":   {`(?i)(\d+)(?:\(\d+-\d+\))?%?\s*(?:INCREASED\s+)?LIGHTNING\s+RESISTANCE`, "Lightning Res %d+%%"},
+		"chaos-res":   {`(?i)(\d+)(?:\(\d+-\d+\))?%?\s*(?:INCREASED\s+)?CHAOS\s+RESISTANCE`, "Chaos Res %d+%%"},
+		"armor":       {`(?i)(\d+)(?:\(\d+-\d+\))?\s+(?:INCREASED\s+)?ARMOUR`, "Armour %d+"},
+		"evasion":     {`(?i)(\d+)(?:\(\d+-\d+\))?\s+(?:INCREASED\s+)?EVASION`, "Evasion %d+"},
+		"es":          {`(?i)\+(\d+)(?:\(\d+-\d+\))?\s+TO\s+MAXIMUM\s+ENERGY\s+SHIELD`, "Energy Shield %d+"},
+		"movespeed":   {`(?i)(\d+)(?:\(\d+-\d+\))?%?\s*(?:INCREASED\s+)?MOVEMENT\s+SPEED`, "Movement Speed %d+%%"},
+		"attackspeed": {`(?i)(\d+)(?:\(\d+-\d+\))?%?\s*(?:INCREASED\s+)?ATTACK\s+SPEED`, "Attack Speed %d+%%"},
+		"castspeed":   {`(?i)(\d+)(?:\(\d+-\d+\))?%?\s*(?:INCREASED\s+)?CAST\s+SPEED`, "Cast Speed %d+%%"},
 	}
 
 	if tmpl, exists := templates[modType]; exists {
@@ -936,6 +1098,35 @@ func getCellCenter(cfg Config, row int, col int) (int, int) {
 	centerY := cfg.BackpackTopLeft.Y + (row * cellHeight) + (cellHeight / 2)
 
 	return centerX, centerY
+}
+
+// getGridCell converts pixel coordinates to cell coordinates (row, col)
+func getGridCell(cfg Config, x, y int) (int, int) {
+	totalWidth := cfg.BackpackBottomRight.X - cfg.BackpackTopLeft.X
+	totalHeight := cfg.BackpackBottomRight.Y - cfg.BackpackTopLeft.Y
+
+	cellWidth := totalWidth / 12
+	cellHeight := totalHeight / 5
+
+	// Calculate which cell the pixel is in
+	col := (x - cfg.BackpackTopLeft.X) / cellWidth
+	row := (y - cfg.BackpackTopLeft.Y) / cellHeight
+
+	// Clamp to valid range
+	if col < 0 {
+		col = 0
+	}
+	if col > 11 {
+		col = 11
+	}
+	if row < 0 {
+		row = 0
+	}
+	if row > 4 {
+		row = 4
+	}
+
+	return row, col
 }
 
 // drawBackpackGrid creates a debug image with the backpack grid overlay
@@ -1003,6 +1194,155 @@ func drawBackpackGrid(cfg Config) error {
 	return nil
 }
 
+// drawBatchWorkflowSnapshot creates a debug image showing the batch crafting workflow
+func drawBatchWorkflowSnapshot(cfg Config, pendingItemX, pendingItemY, resultX, resultY int) error {
+	// Capture the backpack area
+	width := cfg.BackpackBottomRight.X - cfg.BackpackTopLeft.X
+	height := cfg.BackpackBottomRight.Y - cfg.BackpackTopLeft.Y
+
+	bitmap := robotgo.CaptureScreen(cfg.BackpackTopLeft.X, cfg.BackpackTopLeft.Y, width, height)
+	img := robotgo.ToImage(bitmap)
+
+	// Create a new RGBA image for drawing
+	bounds := img.Bounds()
+	rgba := image.NewRGBA(bounds)
+	draw.Draw(rgba, bounds, img, bounds.Min, draw.Src)
+
+	cellWidth := width / 12
+	cellHeight := height / 5
+
+	// Draw grid lines (green)
+	gridColor := color.RGBA{0, 255, 0, 255}
+	for i := 0; i <= 12; i++ {
+		x := i * cellWidth
+		for y := 0; y < height; y++ {
+			if x < width {
+				rgba.Set(x, y, gridColor)
+			}
+		}
+	}
+	for i := 0; i <= 5; i++ {
+		y := i * cellHeight
+		for x := 0; x < width; x++ {
+			if y < height {
+				rgba.Set(x, y, gridColor)
+			}
+		}
+	}
+
+	// Helper to draw a thick rectangle border with semi-transparent fill
+	drawThickRect := func(x, y, w, h int, borderCol color.RGBA, thickness int, fillAlpha uint8) {
+		// Draw semi-transparent fill
+		fillCol := color.RGBA{borderCol.R, borderCol.G, borderCol.B, fillAlpha}
+		for py := y; py < y+h; py++ {
+			for px := x; px < x+w; px++ {
+				if px >= 0 && px < width && py >= 0 && py < height {
+					// Blend with existing pixel
+					existing := rgba.At(px, py)
+					er, eg, eb, _ := existing.RGBA()
+					fr, fg, fb, fa := fillCol.RGBA()
+
+					// Simple alpha blending
+					alpha := float64(fa) / 65535.0
+					nr := uint8((float64(er>>8)*(1-alpha) + float64(fr>>8)*alpha))
+					ng := uint8((float64(eg>>8)*(1-alpha) + float64(fg>>8)*alpha))
+					nb := uint8((float64(eb>>8)*(1-alpha) + float64(fb>>8)*alpha))
+
+					rgba.Set(px, py, color.RGBA{nr, ng, nb, 255})
+				}
+			}
+		}
+
+		// Draw thick border
+		for t := 0; t < thickness; t++ {
+			// Top and bottom
+			for i := x - t; i < x+w+t; i++ {
+				if i >= 0 && i < width {
+					if y-t >= 0 && y-t < height {
+						rgba.Set(i, y-t, borderCol)
+					}
+					if y+h+t >= 0 && y+h+t < height {
+						rgba.Set(i, y+h+t, borderCol)
+					}
+				}
+			}
+			// Left and right
+			for j := y - t; j < y+h+t; j++ {
+				if j >= 0 && j < height {
+					if x-t >= 0 && x-t < width {
+						rgba.Set(x-t, j, borderCol)
+					}
+					if x+w+t >= 0 && x+w+t < width {
+						rgba.Set(x+w+t, j, borderCol)
+					}
+				}
+			}
+		}
+	}
+
+	// Convert absolute coordinates to relative coordinates within the screenshot
+	toRelativeX := func(absX int) int { return absX - cfg.BackpackTopLeft.X }
+	toRelativeY := func(absY int) int { return absY - cfg.BackpackTopLeft.Y }
+
+	itemWidth := cfg.ItemWidth * cellWidth
+	itemHeight := cfg.ItemHeight * cellHeight
+
+	// STEP 1: Highlight pending item (cyan/light blue - source)
+	if pendingItemX != 0 && pendingItemY != 0 {
+		relX := toRelativeX(pendingItemX) - cellWidth/2
+		relY := toRelativeY(pendingItemY) - cellHeight/2
+		drawThickRect(relX, relY, itemWidth, itemHeight, color.RGBA{0, 255, 255, 255}, 8, 60)
+		// Draw large label
+		drawString(rgba, relX+10, relY+20, "STEP 1: PENDING", color.RGBA{0, 255, 255, 255})
+		drawString(rgba, relX+10, relY+35, fmt.Sprintf("Pos: %d,%d", pendingItemX, pendingItemY), color.RGBA{255, 255, 255, 255})
+	}
+
+	// STEP 2: Highlight workbench (orange - crafting location)
+	relWbX := toRelativeX(cfg.WorkbenchTopLeft.X) - cellWidth/2
+	relWbY := toRelativeY(cfg.WorkbenchTopLeft.Y) - cellHeight/2
+	drawThickRect(relWbX, relWbY, itemWidth, itemHeight, color.RGBA{255, 165, 0, 255}, 8, 60)
+	// Draw large label
+	drawString(rgba, relWbX+10, relWbY+20, "STEP 2: WORKBENCH", color.RGBA{255, 165, 0, 255})
+	drawString(rgba, relWbX+10, relWbY+35, fmt.Sprintf("Pos: %d,%d", cfg.WorkbenchTopLeft.X, cfg.WorkbenchTopLeft.Y), color.RGBA{255, 255, 255, 255})
+
+	// STEP 3: Highlight result area slot (magenta - destination)
+	if resultX != 0 && resultY != 0 {
+		relResX := toRelativeX(resultX) - cellWidth/2
+		relResY := toRelativeY(resultY) - cellHeight/2
+		drawThickRect(relResX, relResY, itemWidth, itemHeight, color.RGBA{255, 0, 255, 255}, 8, 60)
+		// Draw large label
+		drawString(rgba, relResX+10, relResY+20, "STEP 3: RESULT", color.RGBA{255, 0, 255, 255})
+		drawString(rgba, relResX+10, relResY+35, fmt.Sprintf("Pos: %d,%d", resultX, resultY), color.RGBA{255, 255, 255, 255})
+	}
+
+	// Draw cell labels (yellow)
+	labelColor := color.RGBA{255, 255, 0, 255}
+	for row := 0; row < 5; row++ {
+		for col := 0; col < 12; col++ {
+			labelX := col*cellWidth + 5
+			labelY := row*cellHeight + 5
+			label := fmt.Sprintf("%d,%d", row, col)
+			drawString(rgba, labelX, labelY, label, labelColor)
+		}
+	}
+
+	// Draw title and legend
+	drawString(rgba, 10, 20, "=== BATCH CRAFTING WORKFLOW ===", color.RGBA{255, 255, 255, 255})
+	drawString(rgba, 10, height-75, "Legend:", color.RGBA{255, 255, 255, 255})
+	drawString(rgba, 10, height-60, "CYAN = Item to Craft (Pending)", color.RGBA{0, 255, 255, 255})
+	drawString(rgba, 10, height-45, "ORANGE = Crafting Station (Workbench)", color.RGBA{255, 165, 0, 255})
+	drawString(rgba, 10, height-30, "MAGENTA = Destination (Result Area)", color.RGBA{255, 0, 255, 255})
+
+	// Save debug snapshot
+	debugFile := filepath.Join(snapshotsDir, "batch_workflow.png")
+	if err := saveImage(rgba, debugFile); err != nil {
+		return fmt.Errorf("failed to save batch workflow snapshot: %w", err)
+	}
+
+	fmt.Printf("✓ Batch workflow snapshot: %s\n", debugFile)
+	return nil
+}
+
 // drawString draws a string on an image at the specified position
 func drawString(img *image.RGBA, x, y int, label string, col color.Color) {
 	point := fixed.Point26_6{X: fixed.Int26_6(x * 64), Y: fixed.Int26_6(y * 64)}
@@ -1016,79 +1356,340 @@ func drawString(img *image.RGBA, x, y int, label string, col color.Color) {
 	d.DrawString(label)
 }
 
-// hasItemAtPosition checks if there's an item at the given position by hovering and checking for a tooltip
-func hasItemAtPosition(cfg Config, x, y int) bool {
-	// Move mouse to position
-	robotgo.Move(x, y)
-	time.Sleep(50 * time.Millisecond)
+// drawFullScreenDebugSnapshot captures the entire screen and labels all important areas
+func drawFullScreenDebugSnapshot(cfg Config, itemNum int, stepName string, itemX, itemY, resultX, resultY int) error {
+	// Get screen dimensions
+	screenWidth, screenHeight := robotgo.GetScreenSize()
+	fmt.Printf("     Screen size: %dx%d\n", screenWidth, screenHeight)
 
-	// Capture a small area to detect if tooltip appears
-	// Simple heuristic: check if there's content in the tooltip area
-	bitmap := robotgo.CaptureScreen(
-		cfg.TooltipRect.Min.X, cfg.TooltipRect.Min.Y,
-		min(cfg.TooltipRect.Dx(), 100), min(cfg.TooltipRect.Dy(), 50),
-	)
+	// Capture entire screen (try with no position to capture all displays)
+	bitmap := robotgo.CaptureScreen()
 	img := robotgo.ToImage(bitmap)
 
-	// Check if there's visible content (not just black/empty)
+	// Get actual captured dimensions
 	bounds := img.Bounds()
-	pixelCount := 0
-	nonBlackCount := 0
-	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
-		for x := bounds.Min.X; x < bounds.Max.X; x++ {
-			pixelCount++
-			r, g, b, _ := img.At(x, y).RGBA()
-			// Check if pixel is not close to black
-			if r > 5000 || g > 5000 || b > 5000 {
-				nonBlackCount++
+	actualWidth := bounds.Dx()
+	actualHeight := bounds.Dy()
+	fmt.Printf("     Captured: %dx%d\n", actualWidth, actualHeight)
+
+	// Use actual captured dimensions
+	screenWidth = actualWidth
+	screenHeight = actualHeight
+
+	// Create RGBA image for drawing
+	rgba := image.NewRGBA(bounds)
+	draw.Draw(rgba, bounds, img, bounds.Min, draw.Src)
+
+	// Helper to draw thick rectangle with label
+	drawLabeledRect := func(x1, y1, x2, y2 int, col color.RGBA, label string, thickness int) {
+		// Draw rectangle border
+		for t := 0; t < thickness; t++ {
+			// Top and bottom
+			for x := x1 - t; x <= x2+t; x++ {
+				if x >= 0 && x < screenWidth {
+					if y1-t >= 0 && y1-t < screenHeight {
+						rgba.Set(x, y1-t, col)
+					}
+					if y2+t >= 0 && y2+t < screenHeight {
+						rgba.Set(x, y2+t, col)
+					}
+				}
+			}
+			// Left and right
+			for y := y1 - t; y <= y2+t; y++ {
+				if y >= 0 && y < screenHeight {
+					if x1-t >= 0 && x1-t < screenWidth {
+						rgba.Set(x1-t, y, col)
+					}
+					if x2+t >= 0 && x2+t < screenWidth {
+						rgba.Set(x2+t, y, col)
+					}
+				}
+			}
+		}
+		// Draw label above the rectangle
+		drawString(rgba, x1+5, y1-15, label, col)
+	}
+
+	// Helper to draw a circle (for chaos orb position)
+	drawCircle := func(centerX, centerY, radius int, col color.RGBA) {
+		for y := centerY - radius; y <= centerY+radius; y++ {
+			for x := centerX - radius; x <= centerX+radius; x++ {
+				if x >= 0 && x < screenWidth && y >= 0 && y < screenHeight {
+					dx := x - centerX
+					dy := y - centerY
+					if dx*dx+dy*dy <= radius*radius {
+						rgba.Set(x, y, col)
+					}
+				}
 			}
 		}
 	}
 
-	// If more than 10% of pixels are non-black, assume item exists
-	return pixelCount > 0 && float64(nonBlackCount)/float64(pixelCount) > 0.1
-}
-
-// findNextItemInArea scans the area and returns the position of the first item found
-// Returns (x, y, true) if found, (0, 0, false) if no item found
-func findNextItemInArea(cfg Config, areaTopLeft image.Point, areaWidth, areaHeight int) (int, int, bool) {
+	// Calculate cell dimensions
 	cellWidth := (cfg.BackpackBottomRight.X - cfg.BackpackTopLeft.X) / 12
 	cellHeight := (cfg.BackpackBottomRight.Y - cfg.BackpackTopLeft.Y) / 5
 
-	// Scan through each cell in the area
-	for row := 0; row < areaHeight; row += cfg.ItemHeight {
-		for col := 0; col < areaWidth; col += cfg.ItemWidth {
-			// Calculate absolute position for this cell
-			x := areaTopLeft.X + (col * cellWidth)
-			y := areaTopLeft.Y + (row * cellHeight)
+	// 1. Draw backpack grid outline (WHITE)
+	drawLabeledRect(
+		cfg.BackpackTopLeft.X, cfg.BackpackTopLeft.Y,
+		cfg.BackpackBottomRight.X, cfg.BackpackBottomRight.Y,
+		color.RGBA{255, 255, 255, 255}, "BACKPACK GRID (5x12)", 5)
 
-			// Check if there's an item at this position
-			if hasItemAtPosition(cfg, x, y) {
-				return x, y, true
-			}
+	// 2. Draw chaos orb position (RED circle)
+	drawCircle(cfg.ChaosPos.X, cfg.ChaosPos.Y, 15, color.RGBA{255, 0, 0, 255})
+	drawString(rgba, cfg.ChaosPos.X+20, cfg.ChaosPos.Y, "CHAOS ORB", color.RGBA{255, 0, 0, 255})
+
+	// 3. Draw pending area (CYAN)
+	pendingX1 := cfg.PendingAreaTopLeft.X - cellWidth/2
+	pendingY1 := cfg.PendingAreaTopLeft.Y - cellHeight/2
+	pendingX2 := pendingX1 + (cfg.PendingAreaWidth * cellWidth)
+	pendingY2 := pendingY1 + (cfg.PendingAreaHeight * cellHeight)
+	drawLabeledRect(pendingX1, pendingY1, pendingX2, pendingY2,
+		color.RGBA{0, 255, 255, 255}, fmt.Sprintf("PENDING AREA (%dx%d cells)", cfg.PendingAreaWidth, cfg.PendingAreaHeight), 6)
+
+	// 4. Draw workbench (ORANGE)
+	workbenchX1 := cfg.WorkbenchTopLeft.X - cellWidth/2
+	workbenchY1 := cfg.WorkbenchTopLeft.Y - cellHeight/2
+	workbenchX2 := workbenchX1 + (cfg.ItemWidth * cellWidth)
+	workbenchY2 := workbenchY1 + (cfg.ItemHeight * cellHeight)
+	drawLabeledRect(workbenchX1, workbenchY1, workbenchX2, workbenchY2,
+		color.RGBA{255, 165, 0, 255}, fmt.Sprintf("WORKBENCH (%dx%d)", cfg.ItemWidth, cfg.ItemHeight), 6)
+
+	// 5. Draw result area (MAGENTA)
+	resultAreaX1 := cfg.ResultAreaTopLeft.X - cellWidth/2
+	resultAreaY1 := cfg.ResultAreaTopLeft.Y - cellHeight/2
+	resultAreaX2 := resultAreaX1 + (cfg.ResultAreaWidth * cellWidth)
+	resultAreaY2 := resultAreaY1 + (cfg.ResultAreaHeight * cellHeight)
+	drawLabeledRect(resultAreaX1, resultAreaY1, resultAreaX2, resultAreaY2,
+		color.RGBA{255, 0, 255, 255}, fmt.Sprintf("RESULT AREA (%dx%d cells)", cfg.ResultAreaWidth, cfg.ResultAreaHeight), 6)
+
+	// 6. Draw tooltip area (LIGHT BLUE)
+	if cfg.TooltipRect.Min.X != 0 && cfg.TooltipRect.Min.Y != 0 {
+		drawLabeledRect(
+			cfg.TooltipRect.Min.X, cfg.TooltipRect.Min.Y,
+			cfg.TooltipRect.Max.X, cfg.TooltipRect.Max.Y,
+			color.RGBA{100, 200, 255, 255}, fmt.Sprintf("TOOLTIP AREA (%dx%d)",
+				cfg.TooltipRect.Dx(), cfg.TooltipRect.Dy()), 4)
+	}
+
+	// 7. Highlight current item to be moved (YELLOW with pulsing effect)
+	if itemX != 0 && itemY != 0 {
+		itemX1 := itemX - cellWidth/2
+		itemY1 := itemY - cellHeight/2
+		itemX2 := itemX1 + (cfg.ItemWidth * cellWidth)
+		itemY2 := itemY1 + (cfg.ItemHeight * cellHeight)
+		drawLabeledRect(itemX1, itemY1, itemX2, itemY2,
+			color.RGBA{255, 255, 0, 255}, ">> ITEM TO MOVE <<", 8)
+	}
+
+	// 8. Highlight target result slot (GREEN)
+	if resultX != 0 && resultY != 0 {
+		resultSlotX1 := resultX - cellWidth/2
+		resultSlotY1 := resultY - cellHeight/2
+		resultSlotX2 := resultSlotX1 + (cfg.ItemWidth * cellWidth)
+		resultSlotY2 := resultSlotY1 + (cfg.ItemHeight * cellHeight)
+		drawLabeledRect(resultSlotX1, resultSlotY1, resultSlotX2, resultSlotY2,
+			color.RGBA{0, 255, 0, 255}, ">> TARGET SLOT <<", 8)
+	}
+
+	// Draw title and instructions with round info
+	titleText := fmt.Sprintf("=== ROUND #%d - %s ===", itemNum, stepName)
+	drawString(rgba, 20, 30, titleText, color.RGBA{255, 255, 255, 255})
+	drawString(rgba, 20, 50, "Flow: PENDING (cyan) -> WORKBENCH (orange) -> RESULT (magenta) | TOOLTIP (light blue)", color.RGBA{200, 200, 200, 255})
+
+	// Save snapshot with round number and step name
+	debugFile := filepath.Join(snapshotsDir, fmt.Sprintf("round%d_%s.png", itemNum, stepName))
+	if err := saveImage(rgba, debugFile); err != nil {
+		return fmt.Errorf("failed to save full screen debug snapshot: %w", err)
+	}
+
+	fmt.Printf("✓ Full screen debug snapshot: %s\n", debugFile)
+	return nil
+}
+
+// loadEmptyCellReference loads the reference image of an empty cell
+func loadEmptyCellReference(path string) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("failed to open reference image: %w", err)
+	}
+	defer file.Close()
+
+	img, err := png.Decode(file)
+	if err != nil {
+		return fmt.Errorf("failed to decode reference image: %w", err)
+	}
+
+	emptyCellReference = img
+	fmt.Printf("✓ Loaded empty cell reference image: %s (%dx%d)\n",
+		path, img.Bounds().Dx(), img.Bounds().Dy())
+	return nil
+}
+
+// compareImages calculates the similarity between two images using Mean Squared Error (MSE)
+// Returns a similarity score from 0.0 (identical) to 1.0 (completely different)
+func compareImages(img1, img2 image.Image) float64 {
+	bounds1 := img1.Bounds()
+	bounds2 := img2.Bounds()
+
+	// Images must be same size
+	if bounds1.Dx() != bounds2.Dx() || bounds1.Dy() != bounds2.Dy() {
+		return 1.0 // Completely different if sizes don't match
+	}
+
+	var sumSquaredDiff float64
+	pixelCount := 0
+
+	for y := 0; y < bounds1.Dy(); y++ {
+		for x := 0; x < bounds1.Dx(); x++ {
+			r1, g1, b1, _ := img1.At(bounds1.Min.X+x, bounds1.Min.Y+y).RGBA()
+			r2, g2, b2, _ := img2.At(bounds2.Min.X+x, bounds2.Min.Y+y).RGBA()
+
+			// Convert to 8-bit (0-255)
+			r1_8, g1_8, b1_8 := uint8(r1>>8), uint8(g1>>8), uint8(b1>>8)
+			r2_8, g2_8, b2_8 := uint8(r2>>8), uint8(g2>>8), uint8(b2>>8)
+
+			// Calculate squared difference for each channel
+			dr := float64(int(r1_8) - int(r2_8))
+			dg := float64(int(g1_8) - int(g2_8))
+			db := float64(int(b1_8) - int(b2_8))
+
+			sumSquaredDiff += dr*dr + dg*dg + db*db
+			pixelCount++
 		}
 	}
 
+	// Calculate MSE and normalize to 0-1 range
+	// Max possible diff per channel: 255, so max squared diff = 255*255*3 = 195075 per pixel
+	mse := sumSquaredDiff / float64(pixelCount)
+	normalizedDiff := mse / 195075.0
+
+	return normalizedDiff
+}
+
+// hasItemAtPosition checks if there's an item at the given position by comparing with reference empty cell
+func hasItemAtPosition(cfg Config, x, y int) bool {
+	// If no reference image loaded, fall back to old method
+	if emptyCellReference == nil {
+		fmt.Println("     [hasItemAtPosition] WARNING: No reference image loaded, using fallback detection")
+		return false
+	}
+
+	// Calculate cell dimensions
+	totalWidth := cfg.BackpackBottomRight.X - cfg.BackpackTopLeft.X
+	totalHeight := cfg.BackpackBottomRight.Y - cfg.BackpackTopLeft.Y
+	cellWidth := totalWidth / 12
+	cellHeight := totalHeight / 5
+
+	// Move mouse away from the cell to avoid tooltip interference
+	// Move to a safe position far from the backpack (e.g., top-left corner of screen)
+	robotgo.Move(50, 50)
+	time.Sleep(150 * time.Millisecond) // Wait for any tooltip to disappear
+
+	// Capture the actual cell area (item sprite area)
+	// Use 80% of cell size to avoid edge artifacts
+	captureWidth := int(float64(cellWidth) * 0.8)
+	captureHeight := int(float64(cellHeight) * 0.8)
+	captureX := x - captureWidth/2
+	captureY := y - captureHeight/2
+
+	bitmap := robotgo.CaptureScreen(captureX, captureY, captureWidth, captureHeight)
+	img := robotgo.ToImage(bitmap)
+
+	// Compare with reference empty cell image
+	diffScore := compareImages(img, emptyCellReference)
+
+	// If difference is above threshold, there's an item
+	// Threshold: 0.05 means 5% different from empty cell = has item
+	threshold := 0.05
+	hasItem := diffScore > threshold
+
+	// Save debug snapshot of captured cell
+	seqNum := snapshotCounter.Add(1)
+	resultStr := "EMPTY"
+	if hasItem {
+		resultStr = "HAS_ITEM"
+	}
+	debugFile := filepath.Join(snapshotsDir, fmt.Sprintf("cell_check_%d_pos_%d_%d_%s_diff%.3f.png",
+		seqNum, x, y, resultStr, diffScore))
+	saveImage(img, debugFile)
+
+	// Log detection result for debugging
+	fmt.Printf("     [hasItemAtPosition] (%d,%d): diff=%.3f (threshold: %.3f) -> %v (saved: %s)\n",
+		x, y, diffScore, threshold, hasItem, debugFile)
+
+	return hasItem
+}
+
+// findNextItemInArea scans the area and returns the position of the first item found using best-effort strategy
+// Strategy: Jumps by item dimensions to efficiently find next item, skipping empty slots
+// skippedPositions: map of "x,y" positions to skip (already processed items)
+// Returns (x, y, true) if found, (0, 0, false) if no item found
+func findNextItemInArea(cfg Config, areaTopLeft image.Point, areaWidth, areaHeight int, skippedPositions map[string]bool) (int, int, bool) {
+	cellWidth := (cfg.BackpackBottomRight.X - cfg.BackpackTopLeft.X) / 12
+	cellHeight := (cfg.BackpackBottomRight.Y - cfg.BackpackTopLeft.Y) / 5
+
+	fmt.Println("  [findNextItemInArea] Scanning pending area for next item...")
+	positionsChecked := 0
+	positionsSkipped := 0
+
+	// Best-effort scan: jump by item dimensions to find items efficiently
+	// For a 2x3 item, this checks positions: (0,0), (2,0), (4,0), ... then (0,3), (2,3), ...
+	for row := 0; row < areaHeight; row += cfg.ItemHeight {
+		for col := 0; col < areaWidth; col += cfg.ItemWidth {
+			// Calculate absolute position for this potential item (top-left corner)
+			x := areaTopLeft.X + (col * cellWidth)
+			y := areaTopLeft.Y + (row * cellHeight)
+
+			// Create position key for tracking
+			posKey := fmt.Sprintf("%d,%d", x, y)
+
+			// Skip if this position was already processed
+			if skippedPositions[posKey] {
+				// Already moved - loop automatically jumps by itemWidth to next position
+				positionsSkipped++
+				continue
+			}
+
+			// Check if there's an item at this position
+			positionsChecked++
+			if hasItemAtPosition(cfg, x, y) {
+				// Found an item! Return immediately
+				fmt.Printf("  [findNextItemInArea] ✓ Found item at (%d,%d) after checking %d positions (skipped %d)\n",
+					x, y, positionsChecked, positionsSkipped)
+				return x, y, true
+			}
+			// Empty slot - loop automatically jumps by itemWidth to next potential position
+		}
+	}
+
+	fmt.Printf("  [findNextItemInArea] ✗ No items found (checked %d positions, skipped %d)\n",
+		positionsChecked, positionsSkipped)
 	return 0, 0, false
 }
 
-// findEmptySlotInArea finds the first empty slot in an area
+// findEmptySlotInArea finds the first empty slot in an area using best-effort strategy
+// Strategy: Jumps by item dimensions when occupied slot found to skip to next potential slot
 // Returns (x, y, true) if found, (0, 0, false) if area is full
 func findEmptySlotInArea(cfg Config, areaTopLeft image.Point, areaWidth, areaHeight int) (int, int, bool) {
 	cellWidth := (cfg.BackpackBottomRight.X - cfg.BackpackTopLeft.X) / 12
 	cellHeight := (cfg.BackpackBottomRight.Y - cfg.BackpackTopLeft.Y) / 5
 
-	// Scan through each cell in the area
+	// Best-effort scan: jump by item dimensions to find empty slots efficiently
+	// For a 2x3 item, this checks positions: (0,0), (2,0), (4,0), ... then (0,3), (2,3), ...
 	for row := 0; row < areaHeight; row += cfg.ItemHeight {
 		for col := 0; col < areaWidth; col += cfg.ItemWidth {
-			// Calculate absolute position for this cell
+			// Calculate absolute position for this potential slot (top-left corner)
 			x := areaTopLeft.X + (col * cellWidth)
 			y := areaTopLeft.Y + (row * cellHeight)
 
 			// Check if this slot is empty
 			if !hasItemAtPosition(cfg, x, y) {
+				// Found empty slot! Return immediately
 				return x, y, true
 			}
+			// Occupied - loop automatically jumps by itemWidth to next potential position
 		}
 	}
 
@@ -1097,17 +1698,42 @@ func findEmptySlotInArea(cfg Config, areaTopLeft image.Point, areaWidth, areaHei
 
 // moveItem moves an item from one position to another
 func moveItem(fromX, fromY, toX, toY int) {
-	// Pick up the item
-	robotgo.Move(fromX, fromY)
-	time.Sleep(50 * time.Millisecond)
-	robotgo.Click()
-	time.Sleep(100 * time.Millisecond)
+	fmt.Printf("     [moveItem] Starting move from (%d,%d) to (%d,%d)\n", fromX, fromY, toX, toY)
 
-	// Drop it at the destination
-	robotgo.Move(toX, toY)
-	time.Sleep(50 * time.Millisecond)
-	robotgo.Click()
+	// Step 1: Move cursor to source
+	fmt.Printf("     [moveItem] Step 1: Moving cursor to source (%d,%d)\n", fromX, fromY)
+	robotgo.Move(fromX, fromY)
 	time.Sleep(100 * time.Millisecond)
+	actualX, actualY := robotgo.Location()
+	fmt.Printf("     [moveItem] Step 1: Cursor at (%d,%d)\n", actualX, actualY)
+
+	// Step 2: Click to grab item (button down + up)
+	fmt.Println("     [moveItem] Step 2: LEFT CLICK to grab item")
+	fmt.Println("     [moveItem]   - Button DOWN")
+	robotgo.Toggle("left", "down")
+	time.Sleep(50 * time.Millisecond)
+	fmt.Println("     [moveItem]   - Button UP")
+	robotgo.Toggle("left", "up")
+	time.Sleep(200 * time.Millisecond)
+	fmt.Println("     [moveItem] Step 2: Item grabbed (cursor should show item)")
+
+	// Step 3: Move cursor to destination
+	fmt.Printf("     [moveItem] Step 3: Moving cursor to destination (%d,%d)\n", toX, toY)
+	robotgo.MoveSmooth(toX, toY, 0.5, 0.5)
+	time.Sleep(100 * time.Millisecond)
+	actualX, actualY = robotgo.Location()
+	fmt.Printf("     [moveItem] Step 3: Cursor at (%d,%d)\n", actualX, actualY)
+
+	// Step 4: Click to drop item (button down + up)
+	fmt.Println("     [moveItem] Step 4: LEFT CLICK to drop item")
+	fmt.Println("     [moveItem]   - Button DOWN")
+	robotgo.Toggle("left", "down")
+	time.Sleep(50 * time.Millisecond)
+	fmt.Println("     [moveItem]   - Button UP")
+	robotgo.Toggle("left", "up")
+	time.Sleep(200 * time.Millisecond)
+	fmt.Println("     [moveItem] Step 4: Item dropped at destination")
+	fmt.Println("     [moveItem] Move complete")
 }
 
 func craft(cfg Config) {
@@ -1141,6 +1767,20 @@ func craft(cfg Config) {
 	// Clean up old debug snapshots from previous runs
 	cleanupDebugSnapshots()
 
+	// Create resource directory if it doesn't exist
+	if err := os.MkdirAll(resourceDir, 0755); err != nil {
+		fmt.Printf("⚠ WARNING: Could not create resource directory: %v\n", err)
+	}
+
+	// Load empty cell reference image for item detection
+	emptyCellRefPath := filepath.Join(resourceDir, "empty_cell_reference.png")
+	fmt.Printf("\n📸 Loading empty cell reference image from: %s\n", emptyCellRefPath)
+	if err := loadEmptyCellReference(emptyCellRefPath); err != nil {
+		fmt.Printf("⚠ WARNING: Could not load empty cell reference: %v\n", err)
+		fmt.Println("   Please save an empty cell snapshot as 'resource/empty_cell_reference.png'")
+		fmt.Println("   Item detection may not work correctly without it!")
+	}
+
 	// Generate grid snapshot at start of crafting
 	if cfg.BackpackTopLeft.X != 0 && cfg.BackpackBottomRight.X != 0 {
 		fmt.Println("\n📸 Generating grid snapshot...")
@@ -1162,7 +1802,10 @@ func craft(cfg Config) {
 		fmt.Printf("🎯 Workbench: (%d, %d)\n", cfg.WorkbenchTopLeft.X, cfg.WorkbenchTopLeft.Y)
 		fmt.Printf("✅ Result area: %dx%d cells\n\n", cfg.ResultAreaWidth, cfg.ResultAreaHeight)
 
+		// Track processed positions to avoid re-detecting moved items
+		processedPositions := make(map[string]bool)
 		itemCount := 0
+
 		for {
 			// Check if stop requested
 			if stopRequested.Load() {
@@ -1170,20 +1813,76 @@ func craft(cfg Config) {
 				return
 			}
 
-			// Find next item in pending area
-			itemX, itemY, found := findNextItemInArea(cfg, cfg.PendingAreaTopLeft, cfg.PendingAreaWidth, cfg.PendingAreaHeight)
+			// Find next item in pending area (skip already processed positions)
+			itemX, itemY, found := findNextItemInArea(cfg, cfg.PendingAreaTopLeft, cfg.PendingAreaWidth, cfg.PendingAreaHeight, processedPositions)
 			if !found {
 				fmt.Println("\n✓ No more items in pending area")
 				break
 			}
 
 			itemCount++
-			fmt.Printf("\n📦 Processing item #%d from pending area...\n", itemCount)
+			fmt.Printf("\n📦 Processing item #%d from pending area at (%d, %d)...\n", itemCount, itemX, itemY)
+
+			// Create round result for tracking
+			roundResult := RoundResult{
+				RoundNumber: itemCount,
+				StartPos:    image.Point{X: itemX, Y: itemY},
+				Success:     false, // Will update at end
+			}
+
+			// Mark this position as processed
+			posKey := fmt.Sprintf("%d,%d", itemX, itemY)
+			processedPositions[posKey] = true
+
+			// Find empty slot in result area FIRST (before moving anything)
+			resultX, resultY, foundSlot := findEmptySlotInArea(cfg, cfg.ResultAreaTopLeft, cfg.ResultAreaWidth, cfg.ResultAreaHeight)
+			if !foundSlot {
+				fmt.Println("\n❌ ERROR: Result area is full!")
+				fmt.Println("   📸 Saving error snapshot...")
+				drawFullScreenDebugSnapshot(cfg, itemCount, "error_result_full", itemX, itemY, 0, 0)
+				fmt.Println("\n⚠ Warning: Please clear result area and restart.")
+				return
+			}
+
+			// Generate debug snapshots BEFORE moving - shows the plan
+			fmt.Println("  → Generating debug snapshots...")
+			fmt.Printf("     Pending: (%d, %d), Workbench: (%d, %d), Result: (%d, %d)\n",
+				itemX, itemY, cfg.WorkbenchTopLeft.X, cfg.WorkbenchTopLeft.Y, resultX, resultY)
+
+			// Ensure snapshots directory exists
+			if err := os.MkdirAll(snapshotsDir, 0755); err != nil {
+				fmt.Printf("⚠ Warning: Could not create snapshots directory: %v\n", err)
+			}
+
+			// Generate fullscreen debug snapshot before move to workbench
+			fmt.Println("  📸 [1/2] Saving fullscreen debug before move to workbench...")
+			if err := drawFullScreenDebugSnapshot(cfg, itemCount, "1_before_move_to_workbench", itemX, itemY, cfg.WorkbenchTopLeft.X, cfg.WorkbenchTopLeft.Y); err != nil {
+				fmt.Printf("❌ ERROR: Could not create debug snapshot: %v\n", err)
+			} else {
+				fmt.Println("  ✓ Fullscreen debug snapshot saved")
+			}
+			time.Sleep(500 * time.Millisecond) // Give user time to see the snapshot
 
 			// Move item from pending to workbench
 			fmt.Println("  → Moving to workbench...")
 			moveItem(itemX, itemY, cfg.WorkbenchTopLeft.X, cfg.WorkbenchTopLeft.Y)
 			time.Sleep(200 * time.Millisecond)
+
+			// Verify the item was moved to workbench
+			if !hasItemAtPosition(cfg, cfg.WorkbenchTopLeft.X, cfg.WorkbenchTopLeft.Y) {
+				fmt.Println("\n❌ ERROR: Failed to move item to workbench!")
+				fmt.Println("   Source: pending area")
+				fmt.Printf("   Destination: workbench (%d, %d)\n", cfg.WorkbenchTopLeft.X, cfg.WorkbenchTopLeft.Y)
+
+				// Save error snapshot
+				fmt.Println("   📸 Saving error snapshot...")
+				drawFullScreenDebugSnapshot(cfg, itemCount, "error_move_to_workbench_failed", itemX, itemY, resultX, resultY)
+
+				fmt.Println("\n⚠  PAUSED - Please manually move the item to workbench")
+				playVictorySound() // Alert sound
+				fmt.Print("   Press Enter to continue after fixing...")
+				fmt.Scanln()
+			}
 
 			// Update ItemPos to workbench for crafting
 			cfg.ItemPos = cfg.WorkbenchTopLeft
@@ -1192,37 +1891,60 @@ func craft(cfg Config) {
 			fmt.Println("  → Starting crafting...")
 			craftSuccess := craftSingleItem(&cfg, session, tempDir)
 
-			// Find empty slot in result area
-			resultX, resultY, foundSlot := findEmptySlotInArea(cfg, cfg.ResultAreaTopLeft, cfg.ResultAreaWidth, cfg.ResultAreaHeight)
-			if !foundSlot {
-				fmt.Println("\n⚠ Warning: Result area is full! Leaving item on workbench.")
-				fmt.Println("   Please clear result area and restart.")
-				return
+			// Generate fullscreen debug snapshot before move to result area
+			fmt.Println("  📸 [2/2] Saving fullscreen debug before move to result area...")
+			if err := drawFullScreenDebugSnapshot(cfg, itemCount, "2_before_move_to_result", cfg.WorkbenchTopLeft.X, cfg.WorkbenchTopLeft.Y, resultX, resultY); err != nil {
+				fmt.Printf("❌ ERROR: Could not create debug snapshot: %v\n", err)
+			} else {
+				fmt.Println("  ✓ Fullscreen debug snapshot saved")
 			}
+			time.Sleep(500 * time.Millisecond) // Give user time to see the snapshot
 
 			// Move item from workbench to result area
 			fmt.Println("  → Moving to result area...")
 			moveItem(cfg.WorkbenchTopLeft.X, cfg.WorkbenchTopLeft.Y, resultX, resultY)
 			time.Sleep(200 * time.Millisecond)
 
+			// Verify the item was moved to result area
+			if !hasItemAtPosition(cfg, resultX, resultY) {
+				fmt.Println("\n❌ ERROR: Failed to move item to result area!")
+				fmt.Println("   Source: workbench")
+				fmt.Printf("   Destination: result area (%d, %d)\n", resultX, resultY)
+
+				// Save error snapshot
+				fmt.Println("   📸 Saving error snapshot...")
+				drawFullScreenDebugSnapshot(cfg, itemCount, "error_move_to_result_failed", itemX, itemY, resultX, resultY)
+
+				fmt.Println("\n⚠  PAUSED - Please manually move the item to result area")
+				playVictorySound() // Alert sound
+				fmt.Print("   Press Enter to continue after fixing...")
+				fmt.Scanln()
+			}
+
+			// Finalize round result
+			roundResult.EndPos = image.Point{X: resultX, Y: resultY}
+			roundResult.Success = craftSuccess
+			if session.TargetModHit {
+				roundResult.TargetHit = true
+				roundResult.TargetModName = session.TargetModName
+				roundResult.TargetValue = session.TargetValue
+			}
+
+			// Save round result
+			session.RoundResults = append(session.RoundResults, roundResult)
+
 			if craftSuccess {
 				fmt.Printf("  ✓ Item #%d completed!\n", itemCount)
 			} else {
 				fmt.Printf("  ✓ Item #%d processed (no target match)\n", itemCount)
 			}
+
+			fmt.Println("  ✓ Ready for next item")
 		}
 
 		fmt.Printf("\n🎉 Batch crafting complete! Processed %d items.\n", itemCount)
 		return
 	}
-
-	// Single-item mode (original behavior)
-	fmt.Println("\n💡 Tips:")
-	fmt.Println("   - Press Ctrl+C to STOP safely")
-	fmt.Println("   - Press F12 to PAUSE/RESUME")
-	fmt.Println("   - Using Shift-hold method for faster crafting!")
-
-	craftSingleItem(&cfg, session, tempDir)
 }
 
 // craftSingleItem performs the crafting loop for a single item
@@ -1247,7 +1969,7 @@ func craftSingleItem(cfg *Config, session *CraftingSession, tempDir string) bool
 		robotgo.KeyToggle("shift", "up")
 	}()
 
-	for attempt := 1; attempt <= cfg.MaxAttempts; attempt++ {
+	for attempt := 1; attempt <= cfg.ChaosPerRound; attempt++ {
 		session.TotalRolls++
 
 		// Check if stop requested
@@ -1295,7 +2017,7 @@ func craftSingleItem(cfg *Config, session *CraftingSession, tempDir string) bool
 			humanDelay(30, 10)
 		}
 
-		fmt.Printf("\r[%d/%d] Crafting... ", attempt, cfg.MaxAttempts)
+		fmt.Printf("\r[%d/%d] Crafting... ", attempt, cfg.ChaosPerRound)
 
 		// Left-click item to apply chaos (Shift is already held)
 		robotgo.Click("left", false)
@@ -1321,7 +2043,13 @@ func craftSingleItem(cfg *Config, session *CraftingSession, tempDir string) bool
 		text, err := runTesseractOCR(img, tempDir)
 		if err != nil {
 			seqNum := snapshotCounter.Load()
-			fmt.Printf("\n⚠ OCR error #%d: %v\n", seqNum, err)
+			fmt.Printf("\n\n❌ OCR ERROR #%d: %v\n", seqNum, err)
+			fmt.Println("   Tooltip snapshot saved: snapshots/current_tooltip.png")
+			fmt.Println("\n⚠  PAUSED - OCR failed to read item tooltip")
+			fmt.Println("   Please check the tooltip snapshot and fix any issues")
+			playVictorySound() // Alert sound
+			fmt.Print("   Press Enter to retry this item...")
+			fmt.Scanln()
 			continue
 		}
 
@@ -1415,16 +2143,16 @@ func craftSingleItem(cfg *Config, session *CraftingSession, tempDir string) bool
 		}
 	}
 
-	fmt.Printf("\n\n❌ Reached max attempts (%d) without finding any target mod\n", cfg.MaxAttempts)
+	fmt.Printf("\n\n○ Used all %d chaos orbs for this round without finding target mod\n", cfg.ChaosPerRound)
 	return false
 }
 
 // Windows API for key state checking and sound
 var (
-	user32           = syscall.NewLazyDLL("user32.dll")
-	procGetKeyState  = user32.NewProc("GetKeyState")
-	kernel32         = syscall.NewLazyDLL("kernel32.dll")
-	procBeep         = kernel32.NewProc("Beep")
+	user32          = syscall.NewLazyDLL("user32.dll")
+	procGetKeyState = user32.NewProc("GetKeyState")
+	kernel32        = syscall.NewLazyDLL("kernel32.dll")
+	procBeep        = kernel32.NewProc("Beep")
 )
 
 // getKeyState returns the state of a virtual key
@@ -1446,15 +2174,15 @@ func playVictorySound() {
 		freq int // Frequency in Hz
 		dur  int // Duration in milliseconds
 	}{
-		{523, 150},  // C5
-		{523, 150},  // C5
-		{523, 150},  // C5
-		{523, 400},  // C5 (longer)
-		{415, 350},  // G#4
-		{466, 350},  // A#4
-		{523, 150},  // C5
-		{466, 150},  // A#4
-		{523, 600},  // C5 (final note, longest)
+		{523, 150}, // C5
+		{523, 150}, // C5
+		{523, 150}, // C5
+		{523, 400}, // C5 (longer)
+		{415, 350}, // G#4
+		{466, 350}, // A#4
+		{523, 150}, // C5
+		{466, 150}, // A#4
+		{523, 600}, // C5 (final note, longest)
 	}
 
 	// Play the melody in a goroutine so it doesn't block
@@ -1649,15 +2377,15 @@ func runTesseractOCR(img image.Image, tempDir string) (string, error) {
 	saveImage(preprocessForOCR(img), debugProcessedFile)
 
 	type ocrStrategy struct {
-		name         string
-		psm          int
+		name          string
+		psm           int
 		usePreprocess bool
 	}
 
 	// Fast path: Try most promising strategies first with early exit
 	fastStrategies := []ocrStrategy{
-		{"PSM6_raw", 6, false},           // Fast: raw image, no preprocessing
-		{"PSM6_preprocessed", 6, true},   // Fallback: with preprocessing
+		{"PSM6_raw", 6, false},         // Fast: raw image, no preprocessing
+		{"PSM6_preprocessed", 6, true}, // Fallback: with preprocessing
 	}
 
 	bestText := ""
@@ -1964,6 +2692,31 @@ func generateReport(session *CraftingSession, cfg Config) {
 			probability := float64(entry.stat.Count) / float64(session.TotalRolls) * 100
 			report.WriteString(fmt.Sprintf("%-20s: %.2f%% (%d/%d rolls)\n",
 				entry.stat.ModName, probability, entry.stat.Count, session.TotalRolls))
+		}
+		report.WriteString("\n")
+	}
+
+	// Per-Round Details (Batch Mode)
+	if len(session.RoundResults) > 0 {
+		report.WriteString("ROUND-BY-ROUND DETAILS\n")
+		report.WriteString("─────────────────────────────────────────────────\n")
+		for _, round := range session.RoundResults {
+			report.WriteString(fmt.Sprintf("\n📦 Round #%d\n", round.RoundNumber))
+			report.WriteString(fmt.Sprintf("   Start Position: (%d, %d)\n", round.StartPos.X, round.StartPos.Y))
+			report.WriteString(fmt.Sprintf("   End Position:   (%d, %d)\n", round.EndPos.X, round.EndPos.Y))
+
+			if round.Success {
+				report.WriteString("   Result: ✓ SUCCESS\n")
+				if round.TargetHit {
+					report.WriteString(fmt.Sprintf("   Target Hit: %s = %d\n", round.TargetModName, round.TargetValue))
+				}
+			} else {
+				report.WriteString("   Result: ○ No target match\n")
+			}
+
+			if round.ErrorMessage != "" {
+				report.WriteString(fmt.Sprintf("   Error: %s\n", round.ErrorMessage))
+			}
 		}
 		report.WriteString("\n")
 	}
