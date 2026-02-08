@@ -1016,6 +1016,100 @@ func drawString(img *image.RGBA, x, y int, label string, col color.Color) {
 	d.DrawString(label)
 }
 
+// hasItemAtPosition checks if there's an item at the given position by hovering and checking for a tooltip
+func hasItemAtPosition(cfg Config, x, y int) bool {
+	// Move mouse to position
+	robotgo.Move(x, y)
+	time.Sleep(50 * time.Millisecond)
+
+	// Capture a small area to detect if tooltip appears
+	// Simple heuristic: check if there's content in the tooltip area
+	bitmap := robotgo.CaptureScreen(
+		cfg.TooltipRect.Min.X, cfg.TooltipRect.Min.Y,
+		min(cfg.TooltipRect.Dx(), 100), min(cfg.TooltipRect.Dy(), 50),
+	)
+	img := robotgo.ToImage(bitmap)
+
+	// Check if there's visible content (not just black/empty)
+	bounds := img.Bounds()
+	pixelCount := 0
+	nonBlackCount := 0
+	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+		for x := bounds.Min.X; x < bounds.Max.X; x++ {
+			pixelCount++
+			r, g, b, _ := img.At(x, y).RGBA()
+			// Check if pixel is not close to black
+			if r > 5000 || g > 5000 || b > 5000 {
+				nonBlackCount++
+			}
+		}
+	}
+
+	// If more than 10% of pixels are non-black, assume item exists
+	return pixelCount > 0 && float64(nonBlackCount)/float64(pixelCount) > 0.1
+}
+
+// findNextItemInArea scans the area and returns the position of the first item found
+// Returns (x, y, true) if found, (0, 0, false) if no item found
+func findNextItemInArea(cfg Config, areaTopLeft image.Point, areaWidth, areaHeight int) (int, int, bool) {
+	cellWidth := (cfg.BackpackBottomRight.X - cfg.BackpackTopLeft.X) / 12
+	cellHeight := (cfg.BackpackBottomRight.Y - cfg.BackpackTopLeft.Y) / 5
+
+	// Scan through each cell in the area
+	for row := 0; row < areaHeight; row += cfg.ItemHeight {
+		for col := 0; col < areaWidth; col += cfg.ItemWidth {
+			// Calculate absolute position for this cell
+			x := areaTopLeft.X + (col * cellWidth)
+			y := areaTopLeft.Y + (row * cellHeight)
+
+			// Check if there's an item at this position
+			if hasItemAtPosition(cfg, x, y) {
+				return x, y, true
+			}
+		}
+	}
+
+	return 0, 0, false
+}
+
+// findEmptySlotInArea finds the first empty slot in an area
+// Returns (x, y, true) if found, (0, 0, false) if area is full
+func findEmptySlotInArea(cfg Config, areaTopLeft image.Point, areaWidth, areaHeight int) (int, int, bool) {
+	cellWidth := (cfg.BackpackBottomRight.X - cfg.BackpackTopLeft.X) / 12
+	cellHeight := (cfg.BackpackBottomRight.Y - cfg.BackpackTopLeft.Y) / 5
+
+	// Scan through each cell in the area
+	for row := 0; row < areaHeight; row += cfg.ItemHeight {
+		for col := 0; col < areaWidth; col += cfg.ItemWidth {
+			// Calculate absolute position for this cell
+			x := areaTopLeft.X + (col * cellWidth)
+			y := areaTopLeft.Y + (row * cellHeight)
+
+			// Check if this slot is empty
+			if !hasItemAtPosition(cfg, x, y) {
+				return x, y, true
+			}
+		}
+	}
+
+	return 0, 0, false
+}
+
+// moveItem moves an item from one position to another
+func moveItem(fromX, fromY, toX, toY int) {
+	// Pick up the item
+	robotgo.Move(fromX, fromY)
+	time.Sleep(50 * time.Millisecond)
+	robotgo.Click()
+	time.Sleep(100 * time.Millisecond)
+
+	// Drop it at the destination
+	robotgo.Move(toX, toY)
+	time.Sleep(50 * time.Millisecond)
+	robotgo.Click()
+	time.Sleep(100 * time.Millisecond)
+}
+
 func craft(cfg Config) {
 	// Initialize cooldown time and snapshot counter
 	pauseToggleCooldown.Store(time.Now())
@@ -1061,11 +1155,78 @@ func craft(cfg Config) {
 	tempDir := filepath.Join(os.TempDir(), "poe2_crafter")
 	os.MkdirAll(tempDir, 0755)
 
+	// Batch mode: process multiple items from pending area
+	if cfg.UseBatchMode {
+		fmt.Println("\n🔄 BATCH MODE ENABLED")
+		fmt.Printf("📦 Pending area: %dx%d cells\n", cfg.PendingAreaWidth, cfg.PendingAreaHeight)
+		fmt.Printf("🎯 Workbench: (%d, %d)\n", cfg.WorkbenchTopLeft.X, cfg.WorkbenchTopLeft.Y)
+		fmt.Printf("✅ Result area: %dx%d cells\n\n", cfg.ResultAreaWidth, cfg.ResultAreaHeight)
+
+		itemCount := 0
+		for {
+			// Check if stop requested
+			if stopRequested.Load() {
+				fmt.Println("\n✓ Stopped by user")
+				return
+			}
+
+			// Find next item in pending area
+			itemX, itemY, found := findNextItemInArea(cfg, cfg.PendingAreaTopLeft, cfg.PendingAreaWidth, cfg.PendingAreaHeight)
+			if !found {
+				fmt.Println("\n✓ No more items in pending area")
+				break
+			}
+
+			itemCount++
+			fmt.Printf("\n📦 Processing item #%d from pending area...\n", itemCount)
+
+			// Move item from pending to workbench
+			fmt.Println("  → Moving to workbench...")
+			moveItem(itemX, itemY, cfg.WorkbenchTopLeft.X, cfg.WorkbenchTopLeft.Y)
+			time.Sleep(200 * time.Millisecond)
+
+			// Update ItemPos to workbench for crafting
+			cfg.ItemPos = cfg.WorkbenchTopLeft
+
+			// Craft this item (use existing single-item logic below)
+			fmt.Println("  → Starting crafting...")
+			craftSuccess := craftSingleItem(&cfg, session, tempDir)
+
+			// Find empty slot in result area
+			resultX, resultY, foundSlot := findEmptySlotInArea(cfg, cfg.ResultAreaTopLeft, cfg.ResultAreaWidth, cfg.ResultAreaHeight)
+			if !foundSlot {
+				fmt.Println("\n⚠ Warning: Result area is full! Leaving item on workbench.")
+				fmt.Println("   Please clear result area and restart.")
+				return
+			}
+
+			// Move item from workbench to result area
+			fmt.Println("  → Moving to result area...")
+			moveItem(cfg.WorkbenchTopLeft.X, cfg.WorkbenchTopLeft.Y, resultX, resultY)
+			time.Sleep(200 * time.Millisecond)
+
+			if craftSuccess {
+				fmt.Printf("  ✓ Item #%d completed!\n", itemCount)
+			} else {
+				fmt.Printf("  ✓ Item #%d processed (no target match)\n", itemCount)
+			}
+		}
+
+		fmt.Printf("\n🎉 Batch crafting complete! Processed %d items.\n", itemCount)
+		return
+	}
+
+	// Single-item mode (original behavior)
 	fmt.Println("\n💡 Tips:")
 	fmt.Println("   - Press Ctrl+C to STOP safely")
 	fmt.Println("   - Press F12 to PAUSE/RESUME")
 	fmt.Println("   - Using Shift-hold method for faster crafting!")
 
+	craftSingleItem(&cfg, session, tempDir)
+}
+
+// craftSingleItem performs the crafting loop for a single item
+func craftSingleItem(cfg *Config, session *CraftingSession, tempDir string) bool {
 	// Initial setup: Right-click chaos orb once
 	fmt.Println("\nPicking up chaos orb...")
 	robotgo.MoveSmooth(cfg.ChaosPos.X, cfg.ChaosPos.Y, 0.1, 0.1) // Very fast movement
@@ -1093,7 +1254,7 @@ func craft(cfg Config) {
 		if stopRequested.Load() {
 			fmt.Println("\n[DEBUG] Stop flag detected in main loop")
 			fmt.Println("\n✓ Stopped by user")
-			return
+			return false
 		}
 
 		// Check for pause toggle
@@ -1114,7 +1275,7 @@ func craft(cfg Config) {
 
 			if stopRequested.Load() {
 				fmt.Println("\n✓ Stopped by user")
-				return
+				return false
 			}
 
 			// Resume - countdown and re-grab chaos
@@ -1217,7 +1378,7 @@ func craft(cfg Config) {
 
 			if stopRequested.Load() {
 				fmt.Println("\n✓ Stopped by user")
-				return
+				return false
 			}
 
 			// Resume - countdown and re-grab chaos
@@ -1250,11 +1411,12 @@ func craft(cfg Config) {
 
 			// Play victory melody
 			playVictorySound()
-			return
+			return true
 		}
 	}
 
 	fmt.Printf("\n\n❌ Reached max attempts (%d) without finding any target mod\n", cfg.MaxAttempts)
+	return false
 }
 
 // Windows API for key state checking and sound
