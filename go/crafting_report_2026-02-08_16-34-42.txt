@@ -1,0 +1,36 @@
+╔═══════════════════════════════════════════════╗
+║       POE2 CHAOS CRAFTER - SESSION REPORT     ║
+╚═══════════════════════════════════════════════╝
+
+SESSION SUMMARY
+─────────────────────────────────────────────────
+Start Time:     2026-02-08 16:34:42
+End Time:       2026-02-08 16:48:13
+Duration:       13m31s
+Total Rolls:    25
+Speed:          1.8 rolls/min
+Target Mods:    +3 to Level of all Spell Skills (or higher), 37%+ increased Critical Damage Bonus, +3 to Level of all Projectile Skills (or higher)
+Result:         ✗ Not found
+
+MOD STATISTICS
+─────────────────────────────────────────────────
+Mod Name                Count      Min      Max      Avg
+─────────────────────────────────────────────────
+Spirit                      2       42       47     44.5
+Dexterity                   2       21       27     24.0
+Life                        2       31       35     33.0
+Critical Damage Bonus        1        6        6      6.0
+Mana                        1      161      161    161.0
+Cast Speed                  1       12       12     12.0
+Energy Shield               1       17       17     17.0
+
+PROBABILITY ANALYSIS
+─────────────────────────────────────────────────
+Dexterity           : 8.00% (2/25 rolls)
+Life                : 8.00% (2/25 rolls)
+Spirit              : 8.00% (2/25 rolls)
+Cast Speed          : 4.00% (1/25 rolls)
+Energy Shield       : 4.00% (1/25 rolls)
+Critical Damage Bonus: 4.00% (1/25 rolls)
+Mana                : 4.00% (1/25 rolls)
+

@@ -1,0 +1,26 @@
+╔═══════════════════════════════════════════════╗
+║       POE2 CHAOS CRAFTER - SESSION REPORT     ║
+╚═══════════════════════════════════════════════╝
+
+SESSION SUMMARY
+─────────────────────────────────────────────────
+Start Time:     2026-02-08 16:31:52
+End Time:       2026-02-08 16:34:21
+Duration:       2m29s
+Total Rolls:    15
+Speed:          6.0 rolls/min
+Target Mods:    +3 to Level of all Spell Skills (or higher), 37%+ increased Critical Damage Bonus, +3 to Level of all Projectile Skills (or higher)
+Result:         ✗ Not found
+
+MOD STATISTICS
+─────────────────────────────────────────────────
+Mod Name                Count      Min      Max      Avg
+─────────────────────────────────────────────────
+Cast Speed                  1       14       14     14.0
+Life                        1       16       16     16.0
+
+PROBABILITY ANALYSIS
+─────────────────────────────────────────────────
+Cast Speed          : 6.67% (1/15 rolls)
+Life                : 6.67% (1/15 rolls)
+
