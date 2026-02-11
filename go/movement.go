@@ -16,11 +16,16 @@ var (
 	procBeep        = kernel32.NewProc("Beep")
 )
 
-// moveItem moves an item from one position to another
-func moveItem(fromX, fromY, toX, toY int) {
+// moveItem moves an item from one position to another.
+// Returns true if completed, false if aborted by stop request.
+func moveItem(fromX, fromY, toX, toY int) bool {
 	fmt.Printf("     [moveItem] Starting move from (%d,%d) to (%d,%d)\n", fromX, fromY, toX, toY)
 
 	// Step 1: Move cursor to source
+	if stopRequested.Load() {
+		fmt.Println("     [moveItem] Aborted (stop requested)")
+		return false
+	}
 	fmt.Printf("     [moveItem] Step 1: Moving cursor to source (%d,%d)\n", fromX, fromY)
 	robotgo.Move(fromX, fromY)
 	time.Sleep(100 * time.Millisecond)
@@ -28,6 +33,10 @@ func moveItem(fromX, fromY, toX, toY int) {
 	fmt.Printf("     [moveItem] Step 1: Cursor at (%d,%d)\n", actualX, actualY)
 
 	// Step 2: Click to grab item (button down + up)
+	if stopRequested.Load() {
+		fmt.Println("     [moveItem] Aborted (stop requested)")
+		return false
+	}
 	fmt.Println("     [moveItem] Step 2: LEFT CLICK to grab item")
 	fmt.Println("     [moveItem]   - Button DOWN")
 	robotgo.Toggle("left", "down")
@@ -38,6 +47,10 @@ func moveItem(fromX, fromY, toX, toY int) {
 	fmt.Println("     [moveItem] Step 2: Item grabbed (cursor should show item)")
 
 	// Step 3: Move cursor to destination
+	if stopRequested.Load() {
+		fmt.Println("     [moveItem] Aborted after grab (stop requested)")
+		return false
+	}
 	fmt.Printf("     [moveItem] Step 3: Moving cursor to destination (%d,%d)\n", toX, toY)
 	robotgo.MoveSmooth(toX, toY, 0.5, 0.5)
 	time.Sleep(100 * time.Millisecond)
@@ -45,6 +58,10 @@ func moveItem(fromX, fromY, toX, toY int) {
 	fmt.Printf("     [moveItem] Step 3: Cursor at (%d,%d)\n", actualX, actualY)
 
 	// Step 4: Click to drop item (button down + up)
+	if stopRequested.Load() {
+		fmt.Println("     [moveItem] Aborted after move (stop requested)")
+		return false
+	}
 	fmt.Println("     [moveItem] Step 4: LEFT CLICK to drop item")
 	fmt.Println("     [moveItem]   - Button DOWN")
 	robotgo.Toggle("left", "down")
@@ -54,6 +71,7 @@ func moveItem(fromX, fromY, toX, toY int) {
 	time.Sleep(200 * time.Millisecond)
 	fmt.Println("     [moveItem] Step 4: Item dropped at destination")
 	fmt.Println("     [moveItem] Move complete")
+	return true
 }
 
 // getKeyState returns the state of a virtual key

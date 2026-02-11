@@ -146,12 +146,19 @@ func craft(cfg Config) {
 			time.Sleep(500 * time.Millisecond) // Give user time to see the snapshot
 
 			// Move item from pending to workbench
+			if stopRequested.Load() {
+				fmt.Println("\n✓ Stopped by user")
+				return
+			}
 			fmt.Println("  → Moving to workbench...")
-			moveItem(itemX, itemY, cfg.WorkbenchTopLeft.X, cfg.WorkbenchTopLeft.Y)
+			if !moveItem(itemX, itemY, cfg.WorkbenchTopLeft.X, cfg.WorkbenchTopLeft.Y) {
+				fmt.Println("\n✓ Stopped by user during move")
+				return
+			}
 			time.Sleep(200 * time.Millisecond)
 
 			// Verify the item was moved to workbench
-			if !hasItemAtPosition(cfg, cfg.WorkbenchTopLeft.X, cfg.WorkbenchTopLeft.Y) {
+			if !stopRequested.Load() && !hasItemAtPosition(cfg, cfg.WorkbenchTopLeft.X, cfg.WorkbenchTopLeft.Y) {
 				fmt.Println("\n❌ ERROR: Failed to move item to workbench!")
 				fmt.Println("   Source: pending area")
 				fmt.Printf("   Destination: workbench (%d, %d)\n", cfg.WorkbenchTopLeft.X, cfg.WorkbenchTopLeft.Y)
@@ -166,12 +173,22 @@ func craft(cfg Config) {
 				fmt.Scanln()
 			}
 
+			if stopRequested.Load() {
+				fmt.Println("\n✓ Stopped by user")
+				return
+			}
+
 			// Update ItemPos to workbench for crafting
 			cfg.ItemPos = cfg.WorkbenchTopLeft
 
 			// Craft this item (use existing single-item logic below)
 			fmt.Println("  → Starting crafting...")
 			craftSuccess := craftSingleItem(&cfg, session, tempDir)
+
+			if stopRequested.Load() {
+				fmt.Println("\n✓ Stopped by user")
+				return
+			}
 
 			// Generate fullscreen debug snapshot before move to result area
 			fmt.Println("  📸 [2/2] Saving fullscreen debug before move to result area...")
@@ -183,12 +200,19 @@ func craft(cfg Config) {
 			time.Sleep(500 * time.Millisecond) // Give user time to see the snapshot
 
 			// Move item from workbench to result area
+			if stopRequested.Load() {
+				fmt.Println("\n✓ Stopped by user")
+				return
+			}
 			fmt.Println("  → Moving to result area...")
-			moveItem(cfg.WorkbenchTopLeft.X, cfg.WorkbenchTopLeft.Y, resultX, resultY)
+			if !moveItem(cfg.WorkbenchTopLeft.X, cfg.WorkbenchTopLeft.Y, resultX, resultY) {
+				fmt.Println("\n✓ Stopped by user during move")
+				return
+			}
 			time.Sleep(200 * time.Millisecond)
 
 			// Verify the item was moved to result area
-			if !hasItemAtPosition(cfg, resultX, resultY) {
+			if !stopRequested.Load() && !hasItemAtPosition(cfg, resultX, resultY) {
 				fmt.Println("\n❌ ERROR: Failed to move item to result area!")
 				fmt.Println("   Source: workbench")
 				fmt.Printf("   Destination: result area (%d, %d)\n", resultX, resultY)
@@ -362,7 +386,7 @@ func craftSingleItem(cfg *Config, session *CraftingSession, tempDir string) bool
 		}
 
 		// Track all mods found in this roll
-		trackMods(text, session)
+		trackMods(text, session, session.TotalRolls)
 
 		// Check if any of the target mods matched
 		matched, matchedMod, value := checkAnyMod(text, cfg.TargetMods)

@@ -46,7 +46,7 @@ type CraftingSession struct {
 }
 
 // trackMods parses OCR text and tracks all mods found
-func trackMods(text string, session *CraftingSession) {
+func trackMods(text string, session *CraftingSession, rollNumber int) {
 	// Common mod patterns to track
 	modPatterns := []struct {
 		name    string
