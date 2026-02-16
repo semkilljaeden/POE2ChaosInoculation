@@ -29,6 +29,24 @@ func craft(cfg Config) {
 		ModStats:  make(map[string]*ModStat),
 	}
 
+	// Register session with hub for web GUI status
+	if hub != nil {
+		hub.mu.Lock()
+		hub.activeSession = session
+		hub.activeConfig = &cfg
+		hub.state = "running"
+		hub.mu.Unlock()
+	}
+	defer func() {
+		if hub != nil {
+			hub.mu.Lock()
+			hub.activeSession = nil
+			hub.activeConfig = nil
+			hub.state = "idle"
+			hub.mu.Unlock()
+		}
+	}()
+
 	// Setup signal handler for Ctrl+C
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
@@ -46,8 +64,10 @@ func craft(cfg Config) {
 		generateReport(session, cfg)
 	}()
 
-	// Clean up old debug snapshots from previous runs
-	cleanupDebugSnapshots()
+	// Clean up old debug snapshots from previous runs (only in debug mode)
+	if debugMode {
+		cleanupDebugSnapshots()
+	}
 
 	// Create resource directory if it doesn't exist
 	if err := os.MkdirAll(resourceDir, 0755); err != nil {
@@ -63,8 +83,8 @@ func craft(cfg Config) {
 		fmt.Println("   Item detection may not work correctly without it!")
 	}
 
-	// Generate grid snapshot at start of crafting
-	if cfg.BackpackTopLeft.X != 0 && cfg.BackpackBottomRight.X != 0 {
+	// Generate grid snapshot at start of crafting (debug mode only)
+	if debugMode && cfg.BackpackTopLeft.X != 0 && cfg.BackpackBottomRight.X != 0 {
 		fmt.Println("\n📸 Generating grid snapshot...")
 		if err := drawBackpackGrid(cfg); err != nil {
 			fmt.Printf("⚠ Warning: Could not create grid snapshot: %v\n", err)
@@ -72,6 +92,9 @@ func craft(cfg Config) {
 			fmt.Println("✓ Grid snapshot: backpack_grid_debug.png")
 		}
 	}
+
+	// Ensure snapshots directory exists (needed for current_tooltip.png in web mode)
+	os.MkdirAll(snapshotsDir, 0755)
 
 	// Create temp directory for OCR
 	tempDir := filepath.Join(os.TempDir(), "poe2_crafter")
@@ -104,6 +127,7 @@ func craft(cfg Config) {
 
 			itemCount++
 			fmt.Printf("\n📦 Processing item #%d from pending area at (%d, %d)...\n", itemCount, itemX, itemY)
+			emit("item_started", ItemStartedData{ItemNumber: itemCount, PendingX: itemX, PendingY: itemY})
 
 			// Create round result for tracking
 			roundResult := RoundResult{
@@ -120,30 +144,29 @@ func craft(cfg Config) {
 			resultX, resultY, foundSlot := findEmptySlotInArea(cfg, cfg.ResultAreaTopLeft, cfg.ResultAreaWidth, cfg.ResultAreaHeight)
 			if !foundSlot {
 				fmt.Println("\n❌ ERROR: Result area is full!")
-				fmt.Println("   📸 Saving error snapshot...")
-				drawFullScreenDebugSnapshot(cfg, itemCount, "error_result_full", itemX, itemY, 0, 0)
+				if debugMode {
+					drawFullScreenDebugSnapshot(cfg, itemCount, "error_result_full", itemX, itemY, 0, 0)
+				}
 				fmt.Println("\n⚠ Warning: Please clear result area and restart.")
 				return
 			}
 
-			// Generate debug snapshots BEFORE moving - shows the plan
-			fmt.Println("  → Generating debug snapshots...")
 			fmt.Printf("     Pending: (%d, %d), Workbench: (%d, %d), Result: (%d, %d)\n",
 				itemX, itemY, cfg.WorkbenchTopLeft.X, cfg.WorkbenchTopLeft.Y, resultX, resultY)
 
-			// Ensure snapshots directory exists
-			if err := os.MkdirAll(snapshotsDir, 0755); err != nil {
-				fmt.Printf("⚠ Warning: Could not create snapshots directory: %v\n", err)
-			}
+			if debugMode {
+				// Ensure snapshots directory exists
+				if err := os.MkdirAll(snapshotsDir, 0755); err != nil {
+					fmt.Printf("⚠ Warning: Could not create snapshots directory: %v\n", err)
+				}
 
-			// Generate fullscreen debug snapshot before move to workbench
-			fmt.Println("  📸 [1/2] Saving fullscreen debug before move to workbench...")
-			if err := drawFullScreenDebugSnapshot(cfg, itemCount, "1_before_move_to_workbench", itemX, itemY, cfg.WorkbenchTopLeft.X, cfg.WorkbenchTopLeft.Y); err != nil {
-				fmt.Printf("❌ ERROR: Could not create debug snapshot: %v\n", err)
-			} else {
-				fmt.Println("  ✓ Fullscreen debug snapshot saved")
+				// Generate fullscreen debug snapshot before move to workbench
+				fmt.Println("  📸 [1/2] Saving fullscreen debug before move to workbench...")
+				if err := drawFullScreenDebugSnapshot(cfg, itemCount, "1_before_move_to_workbench", itemX, itemY, cfg.WorkbenchTopLeft.X, cfg.WorkbenchTopLeft.Y); err != nil {
+					fmt.Printf("❌ ERROR: Could not create debug snapshot: %v\n", err)
+				}
+				time.Sleep(500 * time.Millisecond)
 			}
-			time.Sleep(500 * time.Millisecond) // Give user time to see the snapshot
 
 			// Move item from pending to workbench
 			if stopRequested.Load() {
@@ -163,9 +186,9 @@ func craft(cfg Config) {
 				fmt.Println("   Source: pending area")
 				fmt.Printf("   Destination: workbench (%d, %d)\n", cfg.WorkbenchTopLeft.X, cfg.WorkbenchTopLeft.Y)
 
-				// Save error snapshot
-				fmt.Println("   📸 Saving error snapshot...")
-				drawFullScreenDebugSnapshot(cfg, itemCount, "error_move_to_workbench_failed", itemX, itemY, resultX, resultY)
+				if debugMode {
+					drawFullScreenDebugSnapshot(cfg, itemCount, "error_move_to_workbench_failed", itemX, itemY, resultX, resultY)
+				}
 
 				fmt.Println("\n⚠  PAUSED - Please manually move the item to workbench")
 				playVictorySound() // Alert sound
@@ -190,14 +213,13 @@ func craft(cfg Config) {
 				return
 			}
 
-			// Generate fullscreen debug snapshot before move to result area
-			fmt.Println("  📸 [2/2] Saving fullscreen debug before move to result area...")
-			if err := drawFullScreenDebugSnapshot(cfg, itemCount, "2_before_move_to_result", cfg.WorkbenchTopLeft.X, cfg.WorkbenchTopLeft.Y, resultX, resultY); err != nil {
-				fmt.Printf("❌ ERROR: Could not create debug snapshot: %v\n", err)
-			} else {
-				fmt.Println("  ✓ Fullscreen debug snapshot saved")
+			if debugMode {
+				fmt.Println("  📸 [2/2] Saving fullscreen debug before move to result area...")
+				if err := drawFullScreenDebugSnapshot(cfg, itemCount, "2_before_move_to_result", cfg.WorkbenchTopLeft.X, cfg.WorkbenchTopLeft.Y, resultX, resultY); err != nil {
+					fmt.Printf("❌ ERROR: Could not create debug snapshot: %v\n", err)
+				}
+				time.Sleep(500 * time.Millisecond)
 			}
-			time.Sleep(500 * time.Millisecond) // Give user time to see the snapshot
 
 			// Move item from workbench to result area
 			if stopRequested.Load() {
@@ -217,9 +239,9 @@ func craft(cfg Config) {
 				fmt.Println("   Source: workbench")
 				fmt.Printf("   Destination: result area (%d, %d)\n", resultX, resultY)
 
-				// Save error snapshot
-				fmt.Println("   📸 Saving error snapshot...")
-				drawFullScreenDebugSnapshot(cfg, itemCount, "error_move_to_result_failed", itemX, itemY, resultX, resultY)
+				if debugMode {
+					drawFullScreenDebugSnapshot(cfg, itemCount, "error_move_to_result_failed", itemX, itemY, resultX, resultY)
+				}
 
 				fmt.Println("\n⚠  PAUSED - Please manually move the item to result area")
 				playVictorySound() // Alert sound
@@ -238,6 +260,13 @@ func craft(cfg Config) {
 
 			// Save round result
 			session.RoundResults = append(session.RoundResults, roundResult)
+
+			emit("item_completed", ItemCompletedData{
+				ItemNumber: itemCount,
+				Success:    craftSuccess,
+				ResultX:    resultX,
+				ResultY:    resultY,
+			})
 
 			if craftSuccess {
 				fmt.Printf("  ✓ Item #%d completed!\n", itemCount)
@@ -277,6 +306,21 @@ func craftSingleItem(cfg *Config, session *CraftingSession, tempDir string) bool
 
 	for attempt := 1; attempt <= cfg.ChaosPerRound; attempt++ {
 		session.TotalRolls++
+
+		// Emit roll event for web GUI
+		{
+			duration := time.Since(session.StartTime)
+			rollsPerMin := 0.0
+			if duration.Minutes() > 0 {
+				rollsPerMin = float64(session.TotalRolls) / duration.Minutes()
+			}
+			emit("roll_attempted", RollAttemptedData{
+				AttemptNum:  attempt,
+				MaxAttempts: cfg.ChaosPerRound,
+				TotalRolls:  session.TotalRolls,
+				RollsPerMin: rollsPerMin,
+			})
+		}
 
 		// Check if stop requested
 		if stopRequested.Load() {
@@ -344,9 +388,10 @@ func craftSingleItem(cfg *Config, session *CraftingSession, tempDir string) bool
 
 		// Save current tooltip for debugging (always updated, no counter)
 		saveImage(img, filepath.Join(snapshotsDir, "current_tooltip.png"))
+		emit("tooltip_captured", TooltipCapturedData{Timestamp: time.Now().UnixMilli()})
 
 		// OCR using command-line Tesseract
-		text, err := runTesseractOCR(img, tempDir)
+		text, err := runTesseractOCR(img, tempDir, cfg.GameLanguage)
 		if err != nil {
 			seqNum := snapshotCounter.Load()
 			fmt.Printf("\n\n❌ OCR ERROR #%d: %v\n", seqNum, err)
@@ -387,6 +432,13 @@ func craftSingleItem(cfg *Config, session *CraftingSession, tempDir string) bool
 
 		// Track all mods found in this roll
 		trackMods(text, session, session.TotalRolls)
+
+		// Emit mods tracked event for web GUI
+		emit("mods_tracked", ModsTrackedData{
+			OCRText:    text,
+			ModStats:   session.ModStats,
+			TotalRolls: session.TotalRolls,
+		})
 
 		// Check if any of the target mods matched
 		matched, matchedMod, value := checkAnyMod(text, cfg.TargetMods)
@@ -442,6 +494,13 @@ func craftSingleItem(cfg *Config, session *CraftingSession, tempDir string) bool
 			session.TargetModHit = true
 			session.TargetModName = matchedMod.Description
 			session.TargetValue = value
+
+			emit("target_found", TargetFoundData{
+				ModName:    matchedMod.Description,
+				Value:      value,
+				AttemptNum: attempt,
+				TotalRolls: session.TotalRolls,
+			})
 
 			// Play victory melody
 			playVictorySound()
@@ -544,7 +603,7 @@ func cropImage(img image.Image, cropPercent int) image.Image {
 }
 
 // runTesseractOCRSingle runs OCR with specific settings
-func runTesseractOCRSingle(img image.Image, tempDir string, suffix string, psm int, usePreprocess bool) (string, error) {
+func runTesseractOCRSingle(img image.Image, tempDir string, suffix string, psm int, usePreprocess bool, gameLang string) (string, error) {
 	var processedImg image.Image
 	if usePreprocess {
 		processedImg = preprocessForOCR(img)
@@ -565,11 +624,21 @@ func runTesseractOCRSingle(img image.Image, tempDir string, suffix string, psm i
 	defer os.Remove(tempOutTxt)
 
 	// Run tesseract with specified PSM mode
-	// Character whitelist: English letters, numbers, spaces, and common symbols in POE2
-	cmd := exec.Command("tesseract", tempImg, tempOut, "-l", "eng",
-		"--psm", fmt.Sprintf("%d", psm),
-		"--oem", "1",
-		"-c", "tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 +-()%#")
+	// Select language and whitelist based on game language
+	tessLang := "eng"
+	var tessArgs []string
+	if gameLang == "zh-CN" {
+		tessLang = "chi_sim"
+		tessArgs = []string{tempImg, tempOut, "-l", tessLang,
+			"--psm", fmt.Sprintf("%d", psm),
+			"--oem", "1"}
+	} else {
+		tessArgs = []string{tempImg, tempOut, "-l", tessLang,
+			"--psm", fmt.Sprintf("%d", psm),
+			"--oem", "1",
+			"-c", "tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 +-()%#"}
+	}
+	cmd := exec.Command("tesseract", tessArgs...)
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("tesseract failed: %w", err)
 	}
@@ -584,14 +653,16 @@ func runTesseractOCRSingle(img image.Image, tempDir string, suffix string, psm i
 }
 
 // runTesseractOCR runs OCR with multiple strategies and returns the best result
-func runTesseractOCR(img image.Image, tempDir string) (string, error) {
+func runTesseractOCR(img image.Image, tempDir string, gameLang string) (string, error) {
 	seqNum := snapshotCounter.Add(1)
 
 	// Save original and preprocessed snapshots
-	debugOriginalFile := filepath.Join(snapshotsDir, fmt.Sprintf("snap_%d_raw.png", seqNum))
-	debugProcessedFile := filepath.Join(snapshotsDir, fmt.Sprintf("snap_%d_processed.png", seqNum))
-	saveImage(img, debugOriginalFile)
-	saveImage(preprocessForOCR(img), debugProcessedFile)
+	if debugMode {
+		debugOriginalFile := filepath.Join(snapshotsDir, fmt.Sprintf("snap_%d_raw.png", seqNum))
+		debugProcessedFile := filepath.Join(snapshotsDir, fmt.Sprintf("snap_%d_processed.png", seqNum))
+		saveImage(img, debugOriginalFile)
+		saveImage(preprocessForOCR(img), debugProcessedFile)
+	}
 
 	type ocrStrategy struct {
 		name          string
@@ -609,7 +680,7 @@ func runTesseractOCR(img image.Image, tempDir string) (string, error) {
 	bestScore := 0
 
 	for _, strategy := range fastStrategies {
-		text, err := runTesseractOCRSingle(img, tempDir, strategy.name, strategy.psm, strategy.usePreprocess)
+		text, err := runTesseractOCRSingle(img, tempDir, strategy.name, strategy.psm, strategy.usePreprocess, gameLang)
 		if err != nil {
 			continue
 		}
@@ -647,7 +718,7 @@ func runTesseractOCR(img image.Image, tempDir string) (string, error) {
 	}
 
 	for _, strategy := range slowStrategies {
-		text, err := runTesseractOCRSingle(img, tempDir, strategy.name, strategy.psm, strategy.usePreprocess)
+		text, err := runTesseractOCRSingle(img, tempDir, strategy.name, strategy.psm, strategy.usePreprocess, gameLang)
 		if err != nil {
 			continue
 		}

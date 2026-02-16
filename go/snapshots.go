@@ -389,5 +389,13 @@ func drawFullScreenDebugSnapshot(cfg Config, itemNum int, stepName string, itemX
 	}
 
 	fmt.Printf("✓ Full screen debug snapshot: %s\n", debugFile)
+
+	// Emit snapshot event for web GUI
+	emit("snapshot_updated", SnapshotUpdatedData{
+		Filename:   fmt.Sprintf("round%d_%s.png", itemNum, stepName),
+		StepName:   stepName,
+		ItemNumber: itemNum,
+	})
+
 	return nil
 }

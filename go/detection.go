@@ -111,19 +111,20 @@ func hasItemAtPosition(cfg Config, x, y int) bool {
 	threshold := 0.05
 	hasItem := diffScore > threshold
 
-	// Save debug snapshot of captured cell
-	seqNum := snapshotCounter.Add(1)
-	resultStr := "EMPTY"
-	if hasItem {
-		resultStr = "HAS_ITEM"
+	if debugMode {
+		seqNum := snapshotCounter.Add(1)
+		resultStr := "EMPTY"
+		if hasItem {
+			resultStr = "HAS_ITEM"
+		}
+		debugFile := filepath.Join(snapshotsDir, fmt.Sprintf("cell_check_%d_pos_%d_%d_%s_diff%.3f.png",
+			seqNum, x, y, resultStr, diffScore))
+		saveImage(img, debugFile)
+		fmt.Printf("     [hasItemAtPosition] (%d,%d): diff=%.3f (threshold: %.3f) -> %v (saved: %s)\n",
+			x, y, diffScore, threshold, hasItem, debugFile)
+	} else {
+		fmt.Printf("     [hasItemAtPosition] (%d,%d): diff=%.3f -> %v\n", x, y, diffScore, hasItem)
 	}
-	debugFile := filepath.Join(snapshotsDir, fmt.Sprintf("cell_check_%d_pos_%d_%d_%s_diff%.3f.png",
-		seqNum, x, y, resultStr, diffScore))
-	saveImage(img, debugFile)
-
-	// Log detection result for debugging
-	fmt.Printf("     [hasItemAtPosition] (%d,%d): diff=%.3f (threshold: %.3f) -> %v (saved: %s)\n",
-		x, y, diffScore, threshold, hasItem, debugFile)
 
 	return hasItem
 }

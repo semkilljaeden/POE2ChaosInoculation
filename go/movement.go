@@ -143,9 +143,11 @@ func checkPauseToggle() {
 			if !currentPause {
 				fmt.Print("\n[DEBUG] pauseRequested flag set to true")
 				fmt.Print("\n⏸  PAUSED - Press F12 to resume or Ctrl+C to stop")
+				emit("state_change", StateChangeData{State: "paused"})
 			} else {
 				fmt.Print("\n[DEBUG] pauseRequested flag set to false")
 				fmt.Print("\n▶  RESUMED")
+				emit("state_change", StateChangeData{State: "running"})
 			}
 		}
 	}

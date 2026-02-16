@@ -10,7 +10,10 @@
       "Bash(go vet:*)",
       "Bash(tasklist:*)",
       "Bash(FYNE_DRIVER=software timeout 10 ./poe2_crafter.exe:*)",
-      "Bash(start:*)"
+      "Bash(start:*)",
+      "Bash(dir:*)",
+      "WebFetch(domain:poe2db.tw)",
+      "Bash(wc:*)"
     ]
   }
 }

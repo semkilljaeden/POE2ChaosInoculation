@@ -51,7 +51,8 @@ type Config struct {
 	ChaosPerRound    int              // Number of chaos orbs to use per item/round
 	Delay            time.Duration
 	Debug            bool
-	SaveAllSnapshots bool // Save every attempt's screenshot
+	SaveAllSnapshots bool   // Save every attempt's screenshot
+	GameLanguage     string // Game client language for OCR ("en" or "zh-CN")
 }
 
 // Config file path
@@ -82,7 +83,8 @@ func loadConfig() (Config, error) {
 }
 
 // parseModInput parses user input and creates a ModRequirement
-func parseModInput(input string) ModRequirement {
+// gameLang selects which regex patterns to generate ("zh-CN" for Chinese, anything else for English)
+func parseModInput(input string, gameLang string) ModRequirement {
 	parts := strings.Fields(input)
 	if len(parts) < 2 {
 		return ModRequirement{}
@@ -96,30 +98,58 @@ func parseModInput(input string) ModRequirement {
 		return ModRequirement{}
 	}
 
-	templates := map[string]struct {
+	type modTemplate struct {
 		pattern string
 		desc    string
-	}{
-		// Pattern explanation: (?:\(\d+-\d+\))? = optional range display like (165-179)
-		"life":        {`(?i)\+(\d+)(?:\(\d+-\d+\))?\s+TO\s+MAXIMUM\s+LIFE`, "Life %d+"},
-		"mana":        {`(?i)\+(\d+)(?:\(\d+-\d+\))?\s+TO\s+MAXIMUM\s+MANA`, "Mana %d+"},
-		"str":         {`(?i)\+(\d+)(?:\(\d+-\d+\))?\s+TO\s+STRENGTH`, "Strength %d+"},
-		"dex":         {`(?i)\+(\d+)(?:\(\d+-\d+\))?\s+TO\s+DEXTERITY`, "Dexterity %d+"},
-		"int":         {`(?i)\+(\d+)(?:\(\d+-\d+\))?\s+TO\s+INTELLIGENCE`, "Intelligence %d+"},
-		"spirit":      {`(?i)[+#]?(\d+)(?:\(\d+-\d+\))?\s+TO\s+SPIRIT`, "Spirit %d+"},
-		"spell-level": {`\+(\d+)\s+TO\s+LEVEL\s+OF\s+ALL\s+SPELL\s+SKILLS`, "+%d to Level of all Spell Skills (or higher)"},
-		"proj-level":  {`\+(\d+)\s+TO\s+LEVEL\s+OF\s+ALL\s+PROJECTILE\s+SKILLS`, "+%d to Level of all Projectile Skills (or higher)"},
-		"crit-dmg":    {`(?i)(\d+)(?:\(\d+-\d+\))?%?\s*INCREASED\s+CRITICAL\s+DAMAGE\s+BONUS`, "%d%%+ increased Critical Damage Bonus"},
-		"fire-res":    {`(?i)(\d+)(?:\(\d+-\d+\))?%?\s*(?:INCREASED\s+)?FIRE\s+RESISTANCE`, "Fire Res %d+%%"},
-		"cold-res":    {`(?i)(\d+)(?:\(\d+-\d+\))?%?\s*(?:INCREASED\s+)?COLD\s+RESISTANCE`, "Cold Res %d+%%"},
-		"light-res":   {`(?i)(\d+)(?:\(\d+-\d+\))?%?\s*(?:INCREASED\s+)?LIGHTNING\s+RESISTANCE`, "Lightning Res %d+%%"},
-		"chaos-res":   {`(?i)(\d+)(?:\(\d+-\d+\))?%?\s*(?:INCREASED\s+)?CHAOS\s+RESISTANCE`, "Chaos Res %d+%%"},
-		"armor":       {`(?i)(\d+)(?:\(\d+-\d+\))?\s+(?:INCREASED\s+)?ARMOUR`, "Armour %d+"},
-		"evasion":     {`(?i)(\d+)(?:\(\d+-\d+\))?\s+(?:INCREASED\s+)?EVASION`, "Evasion %d+"},
-		"es":          {`(?i)\+(\d+)(?:\(\d+-\d+\))?\s+TO\s+MAXIMUM\s+ENERGY\s+SHIELD`, "Energy Shield %d+"},
-		"movespeed":   {`(?i)(\d+)(?:\(\d+-\d+\))?%?\s*(?:INCREASED\s+)?MOVEMENT\s+SPEED`, "Movement Speed %d+%%"},
-		"attackspeed": {`(?i)(\d+)(?:\(\d+-\d+\))?%?\s*(?:INCREASED\s+)?ATTACK\s+SPEED`, "Attack Speed %d+%%"},
-		"castspeed":   {`(?i)(\d+)(?:\(\d+-\d+\))?%?\s*(?:INCREASED\s+)?CAST\s+SPEED`, "Cast Speed %d+%%"},
+	}
+
+	var templates map[string]modTemplate
+
+	if gameLang == "zh-CN" {
+		templates = map[string]modTemplate{
+			"life":        {`\+?(\d+)(?:\(\d+-\d+\))?\s*最大生命`, "生命 %d+"},
+			"mana":        {`\+?(\d+)(?:\(\d+-\d+\))?\s*最大魔力`, "魔力 %d+"},
+			"str":         {`\+?(\d+)(?:\(\d+-\d+\))?\s*力量`, "力量 %d+"},
+			"dex":         {`\+?(\d+)(?:\(\d+-\d+\))?\s*敏捷`, "敏捷 %d+"},
+			"int":         {`\+?(\d+)(?:\(\d+-\d+\))?\s*智慧`, "智慧 %d+"},
+			"spirit":      {`\+?(\d+)(?:\(\d+-\d+\))?\s*精魂`, "精魂 %d+"},
+			"spell-level": {`\+(\d+)\s*(?:所有)?法术技能等级`, "+%d 法术技能等级"},
+			"proj-level":  {`\+(\d+)\s*(?:所有)?投射物技能等级`, "+%d 投射物技能等级"},
+			"crit-dmg":    {`(\d+)(?:\(\d+-\d+\))?%?\s*暴击伤害加成`, "%d%% 暴击伤害加成"},
+			"fire-res":    {`(\d+)(?:\(\d+-\d+\))?%?\s*火焰抗性`, "火焰抗性 %d+%%"},
+			"cold-res":    {`(\d+)(?:\(\d+-\d+\))?%?\s*冰冷抗性`, "冰冷抗性 %d+%%"},
+			"light-res":   {`(\d+)(?:\(\d+-\d+\))?%?\s*闪电抗性`, "闪电抗性 %d+%%"},
+			"chaos-res":   {`(\d+)(?:\(\d+-\d+\))?%?\s*混沌抗性`, "混沌抗性 %d+%%"},
+			"armor":       {`(\d+)(?:\(\d+-\d+\))?\s*护甲`, "护甲 %d+"},
+			"evasion":     {`(\d+)(?:\(\d+-\d+\))?\s*闪避`, "闪避 %d+"},
+			"es":          {`\+?(\d+)(?:\(\d+-\d+\))?\s*最大能量护盾`, "能量护盾 %d+"},
+			"movespeed":   {`(\d+)(?:\(\d+-\d+\))?%?\s*移动速度`, "移动速度 %d+%%"},
+			"attackspeed": {`(\d+)(?:\(\d+-\d+\))?%?\s*攻击速度`, "攻击速度 %d+%%"},
+			"castspeed":   {`(\d+)(?:\(\d+-\d+\))?%?\s*施放速度`, "施放速度 %d+%%"},
+		}
+	} else {
+		templates = map[string]modTemplate{
+			// Pattern explanation: (?:\(\d+-\d+\))? = optional range display like (165-179)
+			"life":        {`(?i)\+(\d+)(?:\(\d+-\d+\))?\s+TO\s+MAXIMUM\s+LIFE`, "Life %d+"},
+			"mana":        {`(?i)\+(\d+)(?:\(\d+-\d+\))?\s+TO\s+MAXIMUM\s+MANA`, "Mana %d+"},
+			"str":         {`(?i)\+(\d+)(?:\(\d+-\d+\))?\s+TO\s+STRENGTH`, "Strength %d+"},
+			"dex":         {`(?i)\+(\d+)(?:\(\d+-\d+\))?\s+TO\s+DEXTERITY`, "Dexterity %d+"},
+			"int":         {`(?i)\+(\d+)(?:\(\d+-\d+\))?\s+TO\s+INTELLIGENCE`, "Intelligence %d+"},
+			"spirit":      {`(?i)[+#]?(\d+)(?:\(\d+-\d+\))?\s+TO\s+SPIRIT`, "Spirit %d+"},
+			"spell-level": {`\+(\d+)\s+TO\s+LEVEL\s+OF\s+ALL\s+SPELL\s+SKILLS`, "+%d to Level of all Spell Skills (or higher)"},
+			"proj-level":  {`\+(\d+)\s+TO\s+LEVEL\s+OF\s+ALL\s+PROJECTILE\s+SKILLS`, "+%d to Level of all Projectile Skills (or higher)"},
+			"crit-dmg":    {`(?i)(\d+)(?:\(\d+-\d+\))?%?\s*INCREASED\s+CRITICAL\s+DAMAGE\s+BONUS`, "%d%%+ increased Critical Damage Bonus"},
+			"fire-res":    {`(?i)(\d+)(?:\(\d+-\d+\))?%?\s*(?:INCREASED\s+)?FIRE\s+RESISTANCE`, "Fire Res %d+%%"},
+			"cold-res":    {`(?i)(\d+)(?:\(\d+-\d+\))?%?\s*(?:INCREASED\s+)?COLD\s+RESISTANCE`, "Cold Res %d+%%"},
+			"light-res":   {`(?i)(\d+)(?:\(\d+-\d+\))?%?\s*(?:INCREASED\s+)?LIGHTNING\s+RESISTANCE`, "Lightning Res %d+%%"},
+			"chaos-res":   {`(?i)(\d+)(?:\(\d+-\d+\))?%?\s*(?:INCREASED\s+)?CHAOS\s+RESISTANCE`, "Chaos Res %d+%%"},
+			"armor":       {`(?i)(\d+)(?:\(\d+-\d+\))?\s+(?:INCREASED\s+)?ARMOUR`, "Armour %d+"},
+			"evasion":     {`(?i)(\d+)(?:\(\d+-\d+\))?\s+(?:INCREASED\s+)?EVASION`, "Evasion %d+"},
+			"es":          {`(?i)\+(\d+)(?:\(\d+-\d+\))?\s+TO\s+MAXIMUM\s+ENERGY\s+SHIELD`, "Energy Shield %d+"},
+			"movespeed":   {`(?i)(\d+)(?:\(\d+-\d+\))?%?\s*(?:INCREASED\s+)?MOVEMENT\s+SPEED`, "Movement Speed %d+%%"},
+			"attackspeed": {`(?i)(\d+)(?:\(\d+-\d+\))?%?\s*(?:INCREASED\s+)?ATTACK\s+SPEED`, "Attack Speed %d+%%"},
+			"castspeed":   {`(?i)(\d+)(?:\(\d+-\d+\))?%?\s*(?:INCREASED\s+)?CAST\s+SPEED`, "Cast Speed %d+%%"},
+		}
 	}
 
 	if tmpl, exists := templates[modType]; exists {
@@ -186,7 +216,7 @@ func validateTooltipArea(cfg *Config, scanner *bufio.Scanner) bool {
 	tempDir := filepath.Join(os.TempDir(), "poe2_crafter_setup")
 	os.MkdirAll(tempDir, 0755)
 
-	ocrText, err := runTesseractOCR(tooltipImg, tempDir)
+	ocrText, err := runTesseractOCR(tooltipImg, tempDir, "")
 	if err != nil {
 		fmt.Printf("\n❌ OCR Error: %v\n", err)
 		return false
@@ -337,7 +367,7 @@ func setupWizardUpdateTargetMods(config Config, scanner *bufio.Scanner) Config {
 				}
 				break
 			}
-			mod := parseModInput(input)
+			mod := parseModInput(input, "")
 			if mod.Pattern != "" {
 				config.TargetMods = append(config.TargetMods, mod)
 				fmt.Printf("✓ Added: %s\n", mod.Description)
@@ -750,7 +780,7 @@ func setupWizardConfigureTooltip(config Config, scanner *bufio.Scanner) Config {
 		tempDir := filepath.Join(os.TempDir(), "poe2_crafter_setup")
 		os.MkdirAll(tempDir, 0755)
 
-		ocrText, err := runTesseractOCR(tooltipImg, tempDir)
+		ocrText, err := runTesseractOCR(tooltipImg, tempDir, "")
 		if err != nil {
 			fmt.Printf("\n❌ OCR Error: %v\n", err)
 			fmt.Print("\nRetry tooltip selection? (y/n): ")
@@ -843,7 +873,7 @@ func setupWizardConfigureModsAndOptions(config Config, scanner *bufio.Scanner) C
 			break
 		}
 
-		mod := parseModInput(input)
+		mod := parseModInput(input, "")
 		if mod.Pattern != "" {
 			config.TargetMods = append(config.TargetMods, mod)
 			fmt.Printf("✓ Added: %s\n", mod.Description)

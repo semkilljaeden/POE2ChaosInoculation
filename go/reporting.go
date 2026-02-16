@@ -112,6 +112,76 @@ func trackMods(text string, session *CraftingSession, rollNumber int) {
 	}
 }
 
+// buildReportData builds a JSON-serializable report from the session
+func buildReportData(session *CraftingSession, cfg Config) *ReportData {
+	duration := session.EndTime.Sub(session.StartTime)
+	if session.EndTime.IsZero() {
+		duration = time.Since(session.StartTime)
+	}
+	rollsPerMin := 0.0
+	if duration.Minutes() > 0 {
+		rollsPerMin = float64(session.TotalRolls) / duration.Minutes()
+	}
+
+	report := &ReportData{
+		StartTime:     session.StartTime.Format("2006-01-02 15:04:05"),
+		EndTime:       session.EndTime.Format("2006-01-02 15:04:05"),
+		Duration:      duration.Round(time.Second).String(),
+		TotalRolls:    session.TotalRolls,
+		RollsPerMin:   rollsPerMin,
+		TargetModHit:  session.TargetModHit,
+		TargetModName: session.TargetModName,
+		TargetValue:   session.TargetValue,
+	}
+
+	for _, mod := range cfg.TargetMods {
+		report.TargetMods = append(report.TargetMods, mod.Description)
+	}
+
+	// Mod stats sorted by count
+	type entry struct {
+		name string
+		stat *ModStat
+	}
+	var sorted []entry
+	for name, stat := range session.ModStats {
+		sorted = append(sorted, entry{name, stat})
+	}
+	for i := 0; i < len(sorted); i++ {
+		for j := i + 1; j < len(sorted); j++ {
+			if sorted[j].stat.Count > sorted[i].stat.Count {
+				sorted[i], sorted[j] = sorted[j], sorted[i]
+			}
+		}
+	}
+	for _, e := range sorted {
+		prob := 0.0
+		if session.TotalRolls > 0 {
+			prob = float64(e.stat.Count) / float64(session.TotalRolls) * 100
+		}
+		report.ModStats = append(report.ModStats, ReportModStat{
+			ModName:     e.stat.ModName,
+			Count:       e.stat.Count,
+			MinValue:    e.stat.MinValue,
+			MaxValue:    e.stat.MaxValue,
+			AvgValue:    e.stat.AvgValue,
+			Probability: prob,
+		})
+	}
+
+	for _, round := range session.RoundResults {
+		report.RoundResults = append(report.RoundResults, ReportRoundResult{
+			RoundNumber:   round.RoundNumber,
+			Success:       round.Success,
+			TargetHit:     round.TargetHit,
+			TargetModName: round.TargetModName,
+			TargetValue:   round.TargetValue,
+		})
+	}
+
+	return report
+}
+
 // generateReport creates a detailed report of the crafting session
 func generateReport(session *CraftingSession, cfg Config) {
 	duration := session.EndTime.Sub(session.StartTime)
@@ -254,4 +324,8 @@ func generateReport(session *CraftingSession, cfg Config) {
 
 	// Also print to console
 	fmt.Println("\n" + reportText)
+
+	// Emit session ended event for web GUI
+	reportData := buildReportData(session, cfg)
+	emit("session_ended", SessionEndedData{Report: reportData})
 }
