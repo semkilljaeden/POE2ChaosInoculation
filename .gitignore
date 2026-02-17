@@ -1,0 +1,5 @@
+*.exe
+snapshots/
+crafting_report_*.txt
+tesseract-dev/
+.vscode/
