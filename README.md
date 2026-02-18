@@ -53,7 +53,7 @@ The Dashboard shows real-time crafting state:
 
 | Field | Description |
 |---|---|
-| **State** | Idle / Starting / Running / Paused / Stopped |
+| **State** | Idle / Starting / Running / Stopped |
 | **Item** | Which item in the batch is being crafted |
 | **Roll** | Attempts on the current item / per-item cap |
 | **Total Rolls** | Cumulative rolls this session |
@@ -61,6 +61,11 @@ The Dashboard shows real-time crafting state:
 | **Duration** | Elapsed session time |
 
 The **Parsed Mod Text** panel shows the raw OCR text from the last roll. The **Tooltip** panel shows the in-game tooltip screenshot. The **Mod Statistics** table (below the fold) tracks how often each mod appears and at what values.
+
+| Button | Action |
+|---|---|
+| **Start** | Begin crafting; 5-second countdown, then auto-plays |
+| **Stop** | End the session |
 
 ---
 

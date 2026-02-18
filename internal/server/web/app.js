@@ -440,7 +440,6 @@ function updateCraftState(state) {
     el.className = 'value state-' + state;
 
     const btnStart = document.getElementById('btn-start');
-    const btnPause = document.getElementById('btn-pause');
     const btnStop = document.getElementById('btn-stop');
 
     switch (state) {
@@ -448,32 +447,24 @@ function updateCraftState(state) {
         case 'stopped':
             el.textContent = t('state.' + state);
             btnStart.disabled = false;
-            btnPause.disabled = true;
             btnStop.disabled = true;
             if (durationTimer) { clearInterval(durationTimer); durationTimer = null; }
             break;
         case 'countdown':
             btnStart.disabled = true;
-            btnPause.disabled = true;
             btnStop.disabled = false;
             el.textContent = t('state.starting');
             el.className = 'value state-countdown';
             break;
         case 'running':
-            el.textContent = t('state.running');
-            btnStart.disabled = true;
-            btnPause.disabled = false;
-            btnStop.disabled = false;
-            btnPause.textContent = t('btn.pause');
-            if (!craftStartTime) craftStartTime = Date.now();
-            startDurationTimer();
-            break;
         case 'paused':
-            el.textContent = t('state.paused');
+            el.textContent = t('state.' + state);
             btnStart.disabled = true;
-            btnPause.disabled = false;
             btnStop.disabled = false;
-            btnPause.textContent = t('btn.resume');
+            if (state === 'running') {
+                if (!craftStartTime) craftStartTime = Date.now();
+                startDurationTimer();
+            }
             break;
     }
 }
@@ -597,15 +588,8 @@ async function startCrafting() {
 }
 
 async function pauseCrafting() {
-    try {
-        const resp = await fetch('/api/craft/pause', { method: 'POST' });
-        const data = await resp.json();
-        if (data.error) {
-            showToast(data.error, 'error');
-        }
-    } catch (e) {
-        showToast(t('toast.pauseFailed'), 'error');
-    }
+    // Pause removed — no-op kept for safety
+    return;
 }
 
 async function stopCrafting() {
