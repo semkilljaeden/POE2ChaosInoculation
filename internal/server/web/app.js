@@ -26,6 +26,8 @@ const i18n = {
         'btn.next': 'Next',
         'btn.capture': 'Capture',
         'btn.add': 'Add',
+        'btn.edit': 'Edit',
+        'btn.cancel': 'Cancel',
         'panel.snapshot': 'Live Game Snapshot',
         'panel.ocrText': 'Parsed Mod Text',
         'panel.tooltip': 'Tooltip',
@@ -96,6 +98,7 @@ const i18n = {
         'cfg.title': 'Current Configuration',
         'cfg.reload': 'Reload',
         'cfg.editWizard': 'Edit in Wizard',
+        'cfg.openWizard': 'Setup Wizard',
         'cfg.positions': 'Positions',
         'cfg.chaosOrb': 'Chaos Orb',
         'cfg.bpTopLeft': 'Backpack Top-Left',
@@ -173,6 +176,8 @@ const i18n = {
         'btn.next': '下一步',
         'btn.capture': '捕获',
         'btn.add': '添加',
+        'btn.edit': '编辑',
+        'btn.cancel': '取消',
         'panel.snapshot': '游戏实时截图',
         'panel.ocrText': '识别的词缀文字',
         'panel.tooltip': '提示框',
@@ -243,6 +248,7 @@ const i18n = {
         'cfg.title': '当前配置',
         'cfg.reload': '重新加载',
         'cfg.editWizard': '在向导中编辑',
+        'cfg.openWizard': '设置向导',
         'cfg.positions': '坐标位置',
         'cfg.chaosOrb': '混沌石',
         'cfg.bpTopLeft': '背包左上角',
@@ -636,12 +642,25 @@ function switchTab(tabName) {
     });
 
     if (tabName === 'config') loadAndShowConfig();
-    if (tabName === 'wizard') initWizardModTemplates();
 }
 
 document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => switchTab(btn.dataset.tab));
 });
+
+// ===== Wizard Modal =====
+function openWizardModal() {
+    document.getElementById('wizard-modal').classList.add('active');
+    initWizardModTemplates();
+    captureContext = 'wizard';
+    wizardGoTo(1);
+}
+
+function closeWizardModal() {
+    document.getElementById('wizard-modal').classList.remove('active');
+    captureContext = 'wizard';
+    currentEditSection = null;
+}
 
 // ===== Config Tab =====
 async function loadAndShowConfig() {
@@ -675,58 +694,61 @@ function formatConfigHTML(cfg) {
         return `<div class="config-row"><span class="cfg-label">${label}</span><span class="cfg-value">${value}</span></div>`;
     }
 
-    let html = '';
+    function section(name, title, viewContent) {
+        return `<div class="config-section" id="cfg-section-${name}">
+            <div class="section-header">
+                <h3>${title}</h3>
+                <button class="btn btn-small" onclick="editSection('${name}')">${t('btn.edit')}</button>
+            </div>
+            <div class="section-view">${viewContent}</div>
+        </div>`;
+    }
 
-    html += `<div class="config-section"><h3>${t('cfg.positions')}</h3>`;
-    html += row(t('cfg.chaosOrb'), `(${cfg.ChaosPos?.X || 0}, ${cfg.ChaosPos?.Y || 0})`);
-    html += row(t('cfg.bpTopLeft'), `(${cfg.BackpackTopLeft?.X || 0}, ${cfg.BackpackTopLeft?.Y || 0})`);
-    html += row(t('cfg.bpBottomRight'), `(${cfg.BackpackBottomRight?.X || 0}, ${cfg.BackpackBottomRight?.Y || 0})`);
-    html += '</div>';
+    let posContent = '';
+    posContent += row(t('cfg.chaosOrb'), `(${cfg.ChaosPos?.X || 0}, ${cfg.ChaosPos?.Y || 0})`);
+    posContent += row(t('cfg.bpTopLeft'), `(${cfg.BackpackTopLeft?.X || 0}, ${cfg.BackpackTopLeft?.Y || 0})`);
+    posContent += row(t('cfg.bpBottomRight'), `(${cfg.BackpackBottomRight?.X || 0}, ${cfg.BackpackBottomRight?.Y || 0})`);
 
-    html += `<div class="config-section"><h3>${t('cfg.item')}</h3>`;
-    html += row(t('cfg.itemSize'), `${cfg.ItemWidth || 1} x ${cfg.ItemHeight || 1} ${t('cells')}`);
-    html += '</div>';
+    let itemContent = '';
+    itemContent += row(t('cfg.itemSize'), `${cfg.ItemWidth || 1} x ${cfg.ItemHeight || 1} ${t('cells')}`);
 
-    html += `<div class="config-section"><h3>${t('cfg.batchCrafting')}</h3>`;
+    let batchContent = '';
     const wbPos = cfg.WorkbenchTopLeft;
-    html += row(t('cfg.workbench'), `(${wbPos?.X || 0}, ${wbPos?.Y || 0})${pixelToCell(wbPos)}`);
+    batchContent += row(t('cfg.workbench'), `(${wbPos?.X || 0}, ${wbPos?.Y || 0})${pixelToCell(wbPos)}`);
     const pendPos = cfg.PendingAreaTopLeft;
-    html += row(t('cfg.pendingArea'), `(${pendPos?.X || 0}, ${pendPos?.Y || 0})${pixelToCell(pendPos)}`);
-    html += row(t('cfg.pendingSize'), `${cfg.PendingAreaWidth || 0} x ${cfg.PendingAreaHeight || 0} ${t('cells')}`);
+    batchContent += row(t('cfg.pendingArea'), `(${pendPos?.X || 0}, ${pendPos?.Y || 0})${pixelToCell(pendPos)}`);
+    batchContent += row(t('cfg.pendingSize'), `${cfg.PendingAreaWidth || 0} x ${cfg.PendingAreaHeight || 0} ${t('cells')}`);
     const resPos = cfg.ResultAreaTopLeft;
-    html += row(t('cfg.resultArea'), `(${resPos?.X || 0}, ${resPos?.Y || 0})${pixelToCell(resPos)}`);
-    html += row(t('cfg.resultSize'), `${cfg.ResultAreaWidth || 0} x ${cfg.ResultAreaHeight || 0} ${t('cells')}`);
-    html += '</div>';
+    batchContent += row(t('cfg.resultArea'), `(${resPos?.X || 0}, ${resPos?.Y || 0})${pixelToCell(resPos)}`);
+    batchContent += row(t('cfg.resultSize'), `${cfg.ResultAreaWidth || 0} x ${cfg.ResultAreaHeight || 0} ${t('cells')}`);
 
-    html += `<div class="config-section"><h3>${t('cfg.tooltip')}</h3>`;
-    if (cfg.TooltipOffset) {
-        html += row(t('cfg.offsetFromItem'), `(${cfg.TooltipOffset.X}, ${cfg.TooltipOffset.Y})`);
-    }
-    if (cfg.TooltipSize) {
-        html += row(t('cfg.size'), `${cfg.TooltipSize.X} x ${cfg.TooltipSize.Y} px`);
-    }
-    html += '</div>';
+    let tooltipContent = '';
+    if (cfg.TooltipOffset) tooltipContent += row(t('cfg.offsetFromItem'), `(${cfg.TooltipOffset.X}, ${cfg.TooltipOffset.Y})`);
+    if (cfg.TooltipSize) tooltipContent += row(t('cfg.size'), `${cfg.TooltipSize.X} x ${cfg.TooltipSize.Y} px`);
 
-    html += `<div class="config-section"><h3>${t('cfg.targetMods')}</h3>`;
+    let modsContent = '';
     if (cfg.TargetMods && cfg.TargetMods.length > 0) {
-        html += '<ul class="config-mod-list">';
-        cfg.TargetMods.forEach((mod, i) => {
-            html += `<li>${i + 1}. ${mod.Description}</li>`;
-        });
-        html += '</ul>';
+        modsContent += '<ul class="config-mod-list">';
+        cfg.TargetMods.forEach((mod, i) => { modsContent += `<li>${i + 1}. ${mod.Description}</li>`; });
+        modsContent += '</ul>';
     } else {
-        html += `<span class="empty-msg">${t('empty.noTargetMods')}</span>`;
+        modsContent += `<span class="empty-msg">${t('empty.noTargetMods')}</span>`;
     }
-    html += '</div>';
 
-    html += `<div class="config-section"><h3>${t('cfg.options')}</h3>`;
-    html += row(t('cfg.chaosPerRound'), cfg.ChaosPerRound || 10);
-    html += row(t('cfg.gameLanguage'), cfg.GameLanguage === 'zh-CN' ? '简体中文' : 'English');
-    html += row(t('cfg.ocrDebug'), cfg.Debug ? t('cfg.enabled') : t('cfg.disabled'));
-    html += row(t('cfg.saveSnapshots'), cfg.SaveAllSnapshots ? t('cfg.enabled') : t('cfg.disabled'));
-    html += '</div>';
+    let optionsContent = '';
+    optionsContent += row(t('cfg.chaosPerRound'), cfg.ChaosPerRound || 10);
+    optionsContent += row(t('cfg.gameLanguage'), cfg.GameLanguage === 'zh-CN' ? '简体中文' : 'English');
+    optionsContent += row(t('cfg.ocrDebug'), cfg.Debug ? t('cfg.enabled') : t('cfg.disabled'));
+    optionsContent += row(t('cfg.saveSnapshots'), cfg.SaveAllSnapshots ? t('cfg.enabled') : t('cfg.disabled'));
 
-    return html;
+    return [
+        section('positions', t('cfg.positions'), posContent),
+        section('item', t('cfg.item'), itemContent),
+        section('batch', t('cfg.batchCrafting'), batchContent),
+        section('tooltip', t('cfg.tooltip'), tooltipContent),
+        section('mods', t('cfg.targetMods'), modsContent),
+        section('options', t('cfg.options'), optionsContent),
+    ].join('');
 }
 
 // ===== Wizard =====
@@ -758,6 +780,11 @@ let wizardConfig = {
 };
 
 let modTemplates = [];
+
+// ===== Section Editor State =====
+let captureContext = 'wizard'; // 'wizard' or 'section'
+let currentEditSection = null;
+let sectionCfg = null;
 
 async function initWizardModTemplates() {
     if (modTemplates.length > 0) return;
@@ -945,6 +972,7 @@ function gatherWizardStepData(step) {
 }
 
 async function wizardCapture(field) {
+    captureContext = 'wizard';
     try {
         const resp = await fetch('/api/wizard/capture', {
             method: 'POST',
@@ -974,6 +1002,47 @@ function updateCaptureCountdown(data) {
 function handleCaptureResult(data) {
     const countdown = document.getElementById('capture-countdown');
     countdown.classList.add('hidden');
+
+    if (captureContext === 'section') {
+        const sectionFieldMap = {
+            'sec-grid-tl': () => {
+                if (sectionCfg) sectionCfg.BackpackTopLeft = { X: data.x, Y: data.y };
+                const el = document.getElementById('sec-grid-tl');
+                if (el) el.textContent = `(${data.x}, ${data.y})`;
+            },
+            'sec-grid-br': () => {
+                if (sectionCfg) sectionCfg.BackpackBottomRight = { X: data.x, Y: data.y };
+                const el = document.getElementById('sec-grid-br');
+                if (el) el.textContent = `(${data.x}, ${data.y})`;
+            },
+            'sec-chaos': () => {
+                if (sectionCfg) sectionCfg.ChaosPos = { X: data.x, Y: data.y };
+                const el = document.getElementById('sec-chaos');
+                if (el) el.textContent = `(${data.x}, ${data.y})`;
+            },
+            'sec-tooltip-tl': () => {
+                if (sectionCfg) {
+                    sectionCfg.TooltipRect = sectionCfg.TooltipRect || { Min: {}, Max: {} };
+                    sectionCfg.TooltipRect.Min = { X: data.x, Y: data.y };
+                }
+                const el = document.getElementById('sec-tooltip-tl');
+                if (el) el.textContent = `(${data.x}, ${data.y})`;
+            },
+            'sec-tooltip-br': () => {
+                if (sectionCfg) {
+                    sectionCfg.TooltipRect = sectionCfg.TooltipRect || { Min: {}, Max: {} };
+                    sectionCfg.TooltipRect.Max = { X: data.x, Y: data.y };
+                }
+                const el = document.getElementById('sec-tooltip-br');
+                if (el) el.textContent = `(${data.x}, ${data.y})`;
+            }
+        };
+        if (sectionFieldMap[data.field]) {
+            sectionFieldMap[data.field]();
+            showToast(`${t('btn.capture')}: (${data.x}, ${data.y})`, 'success');
+        }
+        return;
+    }
 
     const fieldMap = {
         'grid-tl': () => {
@@ -1228,6 +1297,461 @@ async function wizardSaveAndStart() {
     await wizardSave();
     switchTab('dashboard');
     setTimeout(() => startCrafting(), 500);
+}
+
+// ===== Config Section Editing =====
+async function editSection(name) {
+    currentEditSection = name;
+    captureContext = 'section';
+
+    try {
+        const resp = await fetch('/api/config');
+        if (!resp.ok) { showToast(t('toast.configLoadError'), 'error'); return; }
+        sectionCfg = await resp.json();
+    } catch (e) {
+        showToast(t('toast.configLoadError'), 'error');
+        return;
+    }
+
+    const sectionDiv = document.getElementById(`cfg-section-${name}`);
+    if (!sectionDiv) return;
+
+    const viewDiv = sectionDiv.querySelector('.section-view');
+    let editorDiv = sectionDiv.querySelector('.section-editor');
+    if (!editorDiv) {
+        editorDiv = document.createElement('div');
+        editorDiv.className = 'section-editor';
+        sectionDiv.appendChild(editorDiv);
+    }
+
+    editorDiv.innerHTML = buildSectionEditor(name, sectionCfg);
+    editorDiv.style.display = 'block';
+    viewDiv.style.display = 'none';
+
+    if (name === 'mods') initSecModTemplates();
+}
+
+function cancelSection(name) {
+    const sectionDiv = document.getElementById(`cfg-section-${name}`);
+    if (!sectionDiv) return;
+    const viewDiv = sectionDiv.querySelector('.section-view');
+    const editorDiv = sectionDiv.querySelector('.section-editor');
+    if (viewDiv) viewDiv.style.display = '';
+    if (editorDiv) editorDiv.style.display = 'none';
+    captureContext = 'wizard';
+    currentEditSection = null;
+    sectionCfg = null;
+}
+
+async function saveSection(name) {
+    if (!sectionCfg) return;
+    applySectionEditorData(name);
+
+    try {
+        const resp = await fetch('/api/config');
+        const fullCfg = resp.ok ? await resp.json() : {};
+        const merged = { ...fullCfg };
+
+        switch (name) {
+            case 'positions':
+                merged.BackpackTopLeft = sectionCfg.BackpackTopLeft;
+                merged.BackpackBottomRight = sectionCfg.BackpackBottomRight;
+                merged.ChaosPos = sectionCfg.ChaosPos;
+                break;
+            case 'item':
+                merged.ItemWidth = sectionCfg.ItemWidth;
+                merged.ItemHeight = sectionCfg.ItemHeight;
+                break;
+            case 'batch':
+                merged.WorkbenchTopLeft = sectionCfg.WorkbenchTopLeft;
+                merged.ItemPos = sectionCfg.WorkbenchTopLeft;
+                merged.PendingAreaTopLeft = sectionCfg.PendingAreaTopLeft;
+                merged.PendingAreaWidth = sectionCfg.PendingAreaWidth;
+                merged.PendingAreaHeight = sectionCfg.PendingAreaHeight;
+                merged.ResultAreaTopLeft = sectionCfg.ResultAreaTopLeft;
+                merged.ResultAreaWidth = sectionCfg.ResultAreaWidth;
+                merged.ResultAreaHeight = sectionCfg.ResultAreaHeight;
+                break;
+            case 'tooltip':
+                merged.TooltipRect = sectionCfg.TooltipRect;
+                if (sectionCfg.TooltipRect?.Min && merged.WorkbenchTopLeft?.X > 0) {
+                    merged.TooltipOffset = {
+                        X: sectionCfg.TooltipRect.Min.X - merged.WorkbenchTopLeft.X,
+                        Y: sectionCfg.TooltipRect.Min.Y - merged.WorkbenchTopLeft.Y
+                    };
+                    merged.TooltipSize = {
+                        X: sectionCfg.TooltipRect.Max.X - sectionCfg.TooltipRect.Min.X,
+                        Y: sectionCfg.TooltipRect.Max.Y - sectionCfg.TooltipRect.Min.Y
+                    };
+                }
+                break;
+            case 'mods':
+                merged.TargetMods = sectionCfg.TargetMods;
+                break;
+            case 'options':
+                merged.ChaosPerRound = sectionCfg.ChaosPerRound;
+                merged.Debug = sectionCfg.Debug;
+                merged.SaveAllSnapshots = sectionCfg.SaveAllSnapshots;
+                break;
+        }
+
+        const saveResp = await fetch('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(merged)
+        });
+
+        if (saveResp.ok) {
+            showToast(t('toast.configSaved'), 'success');
+            cancelSection(name);
+            await loadAndShowConfig();
+        } else {
+            showToast(t('toast.saveFailed'), 'error');
+        }
+    } catch (e) {
+        showToast(t('toast.saveError') + ': ' + e.message, 'error');
+    }
+}
+
+function applySectionEditorData(name) {
+    switch (name) {
+        case 'item': {
+            sectionCfg.ItemWidth = parseInt(document.getElementById('sec-item-width').value) || 1;
+            sectionCfg.ItemHeight = parseInt(document.getElementById('sec-item-height').value) || 1;
+            break;
+        }
+        case 'batch': {
+            const tlX = sectionCfg.BackpackTopLeft?.X || 0;
+            const tlY = sectionCfg.BackpackTopLeft?.Y || 0;
+            const brX = sectionCfg.BackpackBottomRight?.X || 0;
+            const brY = sectionCfg.BackpackBottomRight?.Y || 0;
+            function secCell(row, col) {
+                if (tlX === 0 && brX === 0) return { X: 0, Y: 0 };
+                const cellW = (brX - tlX) / 12;
+                const cellH = (brY - tlY) / 5;
+                return { X: Math.round(tlX + col * cellW + cellW / 2), Y: Math.round(tlY + row * cellH + cellH / 2) };
+            }
+            const wbRow = parseInt(document.getElementById('sec-wb-row').value) || 0;
+            const wbCol = parseInt(document.getElementById('sec-wb-col').value) || 0;
+            sectionCfg.WorkbenchTopLeft = secCell(wbRow, wbCol);
+            const pendRow = parseInt(document.getElementById('sec-pend-row').value) || 0;
+            const pendCol = parseInt(document.getElementById('sec-pend-col').value) || 0;
+            sectionCfg.PendingAreaTopLeft = secCell(pendRow, pendCol);
+            sectionCfg.PendingAreaWidth = parseInt(document.getElementById('sec-pend-w').value) || 4;
+            sectionCfg.PendingAreaHeight = parseInt(document.getElementById('sec-pend-h').value) || 5;
+            const resRow = parseInt(document.getElementById('sec-res-row').value) || 0;
+            const resCol = parseInt(document.getElementById('sec-res-col').value) || 0;
+            sectionCfg.ResultAreaTopLeft = secCell(resRow, resCol);
+            sectionCfg.ResultAreaWidth = parseInt(document.getElementById('sec-res-w').value) || 4;
+            sectionCfg.ResultAreaHeight = parseInt(document.getElementById('sec-res-h').value) || 5;
+            break;
+        }
+        case 'options': {
+            sectionCfg.ChaosPerRound = parseInt(document.getElementById('sec-chaos-per-round').value) || 10;
+            sectionCfg.Debug = document.getElementById('sec-debug').checked;
+            sectionCfg.SaveAllSnapshots = document.getElementById('sec-snapshots').checked;
+            break;
+        }
+        // positions and tooltip are updated live via captures; mods via secAddMod
+    }
+}
+
+function buildSectionEditor(name, cfg) {
+    switch (name) {
+        case 'positions': return buildPositionEditor(cfg);
+        case 'item':      return buildItemEditor(cfg);
+        case 'batch':     return buildBatchEditor(cfg);
+        case 'tooltip':   return buildTooltipEditor(cfg);
+        case 'mods':      return buildModsEditor(cfg);
+        case 'options':   return buildOptionsEditor(cfg);
+        default: return '';
+    }
+}
+
+function buildPositionEditor(cfg) {
+    const gridTl = cfg.BackpackTopLeft?.X ? `(${cfg.BackpackTopLeft.X}, ${cfg.BackpackTopLeft.Y})` : t('wiz.notSet');
+    const gridBr = cfg.BackpackBottomRight?.X ? `(${cfg.BackpackBottomRight.X}, ${cfg.BackpackBottomRight.Y})` : t('wiz.notSet');
+    const chaos  = cfg.ChaosPos?.X ? `(${cfg.ChaosPos.X}, ${cfg.ChaosPos.Y})` : t('wiz.notSet');
+    return `
+        <p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:12px">${t('wiz.step2.desc')}</p>
+        <div class="capture-group">
+            <div class="capture-item">
+                <label>${t('cfg.bpTopLeft')}:</label>
+                <span id="sec-grid-tl" class="capture-value">${gridTl}</span>
+                <button class="btn btn-small" onclick="sectionCapture('sec-grid-tl')">${t('btn.capture')}</button>
+            </div>
+            <div class="capture-item">
+                <label>${t('cfg.bpBottomRight')}:</label>
+                <span id="sec-grid-br" class="capture-value">${gridBr}</span>
+                <button class="btn btn-small" onclick="sectionCapture('sec-grid-br')">${t('btn.capture')}</button>
+            </div>
+            <div class="capture-item">
+                <label>${t('cfg.chaosOrb')}:</label>
+                <span id="sec-chaos" class="capture-value">${chaos}</span>
+                <button class="btn btn-small" onclick="sectionCapture('sec-chaos')">${t('btn.capture')}</button>
+            </div>
+        </div>
+        <div class="section-editor-actions">
+            <button class="btn btn-primary" onclick="saveSection('positions')">${t('wiz.saveConfig')}</button>
+            <button class="btn" onclick="cancelSection('positions')">${t('btn.cancel')}</button>
+        </div>`;
+}
+
+function buildItemEditor(cfg) {
+    const w = cfg.ItemWidth || 1, h = cfg.ItemHeight || 1;
+    const wOpts = [1,2,3,4].map(n => `<option value="${n}"${n===w?' selected':''}>${n}</option>`).join('');
+    const hOpts = [1,2,3,4,5].map(n => `<option value="${n}"${n===h?' selected':''}>${n}</option>`).join('');
+    return `
+        <div class="form-group">
+            <label>${t('wiz.width')}</label>
+            <select id="sec-item-width">${wOpts}</select>
+        </div>
+        <div class="form-group">
+            <label>${t('wiz.height')}</label>
+            <select id="sec-item-height">${hOpts}</select>
+        </div>
+        <div class="section-editor-actions">
+            <button class="btn btn-primary" onclick="saveSection('item')">${t('wiz.saveConfig')}</button>
+            <button class="btn" onclick="cancelSection('item')">${t('btn.cancel')}</button>
+        </div>`;
+}
+
+function buildBatchEditor(cfg) {
+    function pxToRC(pos) {
+        if (!pos || !cfg.BackpackTopLeft || !cfg.BackpackBottomRight) return [0, 0];
+        if (cfg.BackpackTopLeft.X === 0 && cfg.BackpackBottomRight.X === 0) return [0, 0];
+        const cellW = (cfg.BackpackBottomRight.X - cfg.BackpackTopLeft.X) / 12;
+        const cellH = (cfg.BackpackBottomRight.Y - cfg.BackpackTopLeft.Y) / 5;
+        if (cellW <= 0 || cellH <= 0) return [0, 0];
+        return [
+            Math.max(0, Math.round((pos.Y - cfg.BackpackTopLeft.Y - cellH / 2) / cellH)),
+            Math.max(0, Math.round((pos.X - cfg.BackpackTopLeft.X - cellW / 2) / cellW))
+        ];
+    }
+    const [wbRow, wbCol]     = pxToRC(cfg.WorkbenchTopLeft);
+    const [pendRow, pendCol] = pxToRC(cfg.PendingAreaTopLeft);
+    const [resRow, resCol]   = pxToRC(cfg.ResultAreaTopLeft);
+    const pendW = cfg.PendingAreaWidth || 4, pendH = cfg.PendingAreaHeight || 5;
+    const resW  = cfg.ResultAreaWidth  || 4, resH  = cfg.ResultAreaHeight  || 5;
+    return `
+        <p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:12px">${t('wiz.step5.desc')}</p>
+        <div class="batch-config">
+            <fieldset>
+                <legend>${t('wiz.workbench')}</legend>
+                <div class="form-row">
+                    <div class="form-group"><label>${t('wiz.row')}</label><input type="number" id="sec-wb-row" min="0" max="4" value="${wbRow}"></div>
+                    <div class="form-group"><label>${t('wiz.col')}</label><input type="number" id="sec-wb-col" min="0" max="11" value="${wbCol}"></div>
+                </div>
+            </fieldset>
+            <fieldset>
+                <legend>${t('wiz.pendingArea')}</legend>
+                <div class="form-row">
+                    <div class="form-group"><label>${t('wiz.topLeftRow')}</label><input type="number" id="sec-pend-row" min="0" max="4" value="${pendRow}"></div>
+                    <div class="form-group"><label>${t('wiz.topLeftCol')}</label><input type="number" id="sec-pend-col" min="0" max="11" value="${pendCol}"></div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group"><label>${t('wiz.width')}</label><input type="number" id="sec-pend-w" min="1" max="12" value="${pendW}"></div>
+                    <div class="form-group"><label>${t('wiz.height')}</label><input type="number" id="sec-pend-h" min="1" max="5" value="${pendH}"></div>
+                </div>
+            </fieldset>
+            <fieldset>
+                <legend>${t('wiz.resultArea')}</legend>
+                <div class="form-row">
+                    <div class="form-group"><label>${t('wiz.topLeftRow')}</label><input type="number" id="sec-res-row" min="0" max="4" value="${resRow}"></div>
+                    <div class="form-group"><label>${t('wiz.topLeftCol')}</label><input type="number" id="sec-res-col" min="0" max="11" value="${resCol}"></div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group"><label>${t('wiz.width')}</label><input type="number" id="sec-res-w" min="1" max="12" value="${resW}"></div>
+                    <div class="form-group"><label>${t('wiz.height')}</label><input type="number" id="sec-res-h" min="1" max="5" value="${resH}"></div>
+                </div>
+            </fieldset>
+        </div>
+        <div class="section-editor-actions">
+            <button class="btn btn-primary" onclick="saveSection('batch')">${t('wiz.saveConfig')}</button>
+            <button class="btn" onclick="cancelSection('batch')">${t('btn.cancel')}</button>
+        </div>`;
+}
+
+function buildTooltipEditor(cfg) {
+    const tl = cfg.TooltipRect?.Min?.X ? `(${cfg.TooltipRect.Min.X}, ${cfg.TooltipRect.Min.Y})` : t('wiz.notSet');
+    const br = cfg.TooltipRect?.Max?.X ? `(${cfg.TooltipRect.Max.X}, ${cfg.TooltipRect.Max.Y})` : t('wiz.notSet');
+    return `
+        <p style="color:var(--text-secondary);font-size:0.85rem;margin-bottom:12px">${t('wiz.step6.desc')}</p>
+        <div class="capture-group">
+            <div class="capture-item">
+                <label>${t('wiz.topLeft')}</label>
+                <span id="sec-tooltip-tl" class="capture-value">${tl}</span>
+                <button class="btn btn-small" onclick="sectionCapture('sec-tooltip-tl')">${t('btn.capture')}</button>
+            </div>
+            <div class="capture-item">
+                <label>${t('wiz.bottomRight')}</label>
+                <span id="sec-tooltip-br" class="capture-value">${br}</span>
+                <button class="btn btn-small" onclick="sectionCapture('sec-tooltip-br')">${t('btn.capture')}</button>
+            </div>
+        </div>
+        <button class="btn btn-small" onclick="secValidateTooltip()" id="sec-btn-validate">${t('wiz.validateOCR')}</button>
+        <div id="sec-tooltip-validation"></div>
+        <div class="section-editor-actions">
+            <button class="btn btn-primary" onclick="saveSection('tooltip')">${t('wiz.saveConfig')}</button>
+            <button class="btn" onclick="cancelSection('tooltip')">${t('btn.cancel')}</button>
+        </div>`;
+}
+
+function buildModsEditor(cfg) {
+    return `
+        <div class="mod-templates">
+            <select id="sec-mod-template"><option value="">${t('wiz.quickTemplate')}</option></select>
+            <input type="number" id="sec-mod-value" placeholder="${t('wiz.minValue')}" min="1">
+            <button class="btn btn-small" onclick="secAddModFromTemplate()">${t('btn.add')}</button>
+        </div>
+        <div class="mod-custom">
+            <input type="text" id="sec-mod-custom" placeholder="${t('wiz.customPlaceholder')}">
+            <button class="btn btn-small" onclick="secAddModCustom()">${t('wiz.addCustom')}</button>
+        </div>
+        <div id="sec-mod-list" class="mod-list"></div>
+        <div class="section-editor-actions">
+            <button class="btn btn-primary" onclick="saveSection('mods')">${t('wiz.saveConfig')}</button>
+            <button class="btn" onclick="cancelSection('mods')">${t('btn.cancel')}</button>
+        </div>`;
+}
+
+function buildOptionsEditor(cfg) {
+    const cpr = cfg.ChaosPerRound || 10;
+    return `
+        <div class="form-group">
+            <label>${t('wiz.chaosPerRound')}</label>
+            <input type="number" id="sec-chaos-per-round" min="1" max="1000" value="${cpr}">
+        </div>
+        <div class="form-group checkbox-group">
+            <label><input type="checkbox" id="sec-debug"${cfg.Debug?' checked':''}> <span>${t('wiz.ocrDebug')}</span></label>
+        </div>
+        <div class="form-group checkbox-group">
+            <label><input type="checkbox" id="sec-snapshots"${cfg.SaveAllSnapshots?' checked':''}> <span>${t('wiz.saveSnapshots')}</span></label>
+        </div>
+        <div class="section-editor-actions">
+            <button class="btn btn-primary" onclick="saveSection('options')">${t('wiz.saveConfig')}</button>
+            <button class="btn" onclick="cancelSection('options')">${t('btn.cancel')}</button>
+        </div>`;
+}
+
+async function sectionCapture(field) {
+    captureContext = 'section';
+    try {
+        const resp = await fetch('/api/wizard/capture', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ field })
+        });
+        if (!resp.ok) { showToast(t('toast.captureFailed'), 'error'); return; }
+        const countdown = document.getElementById('capture-countdown');
+        countdown.classList.remove('hidden');
+        countdown.textContent = t('wiz.switchToGame');
+    } catch (e) {
+        showToast(t('toast.captureFailed') + ': ' + e.message, 'error');
+    }
+}
+
+async function secValidateTooltip() {
+    if (!sectionCfg) return;
+    const tl = sectionCfg.TooltipRect?.Min;
+    const br = sectionCfg.TooltipRect?.Max;
+    if (!tl || !br || !tl.X || !br.X) { showToast(t('toast.captureCorners'), 'error'); return; }
+    try {
+        const btn = document.getElementById('sec-btn-validate');
+        if (btn) btn.disabled = true;
+        const resp = await fetch('/api/wizard/validate-tooltip', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ x1: tl.X, y1: tl.Y, x2: br.X, y2: br.Y, gameLanguage: gameLang })
+        });
+        const result = await resp.json();
+        const el = document.getElementById('sec-tooltip-validation');
+        if (!el) return;
+        if (result.success) {
+            el.innerHTML = `<div style="color:var(--success);margin-top:10px">${t('ocr.detected', { n: result.validLines })}<pre style="font-size:.75rem;margin-top:6px;max-height:100px;overflow-y:auto">${result.ocrText}</pre></div>`;
+            sectionCfg.TooltipSize = { X: br.X - tl.X, Y: br.Y - tl.Y };
+        } else {
+            el.innerHTML = `<div style="color:var(--danger);margin-top:10px">${t('ocr.noText')}${result.error ? '<br>Error: ' + result.error : ''}</div>`;
+        }
+    } catch (e) {
+        showToast(t('toast.validationFailed') + ': ' + e.message, 'error');
+    } finally {
+        const btn = document.getElementById('sec-btn-validate');
+        if (btn) btn.disabled = false;
+    }
+}
+
+async function initSecModTemplates() {
+    if (!sectionCfg) return;
+    updateSecModList();
+    if (modTemplates.length === 0) {
+        try {
+            const resp = await fetch('/api/mod-templates');
+            modTemplates = await resp.json();
+        } catch (e) { console.error('Failed to load mod templates:', e); return; }
+    }
+    const select = document.getElementById('sec-mod-template');
+    if (!select) return;
+    select.innerHTML = `<option value="">${t('wiz.quickTemplate')}</option>`;
+    modTemplates.forEach(tmpl => {
+        const opt = document.createElement('option');
+        opt.value = tmpl.key;
+        opt.textContent = `${(gameLang === 'zh-CN' && tmpl.name_zh) ? tmpl.name_zh : tmpl.name} (${tmpl.example})`;
+        select.appendChild(opt);
+    });
+}
+
+function secAddModFromTemplate() {
+    const select = document.getElementById('sec-mod-template');
+    const valueInput = document.getElementById('sec-mod-value');
+    const key = select.value;
+    const value = parseInt(valueInput.value);
+    if (!key) { showToast(t('toast.selectMod'), 'error'); return; }
+    if (!value || value < 1) { showToast(t('toast.enterMin'), 'error'); return; }
+    secAddMod(`${key} ${value}`);
+    select.value = '';
+    valueInput.value = '';
+}
+
+function secAddModCustom() {
+    const input = document.getElementById('sec-mod-custom').value.trim();
+    if (!input) { showToast(t('toast.enterMod'), 'error'); return; }
+    secAddMod(input);
+    document.getElementById('sec-mod-custom').value = '';
+}
+
+async function secAddMod(input) {
+    try {
+        const resp = await fetch('/api/wizard/parse-mod', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ input, gameLanguage: gameLang })
+        });
+        if (!resp.ok) { showToast(t('toast.invalidMod'), 'error'); return; }
+        const mod = await resp.json();
+        sectionCfg.TargetMods = sectionCfg.TargetMods || [];
+        sectionCfg.TargetMods.push(mod);
+        updateSecModList();
+        showToast(t('toast.modAdded', { desc: mod.Description }), 'success');
+    } catch (e) {
+        showToast(t('toast.modParseFailed'), 'error');
+    }
+}
+
+function secRemoveMod(i) {
+    if (sectionCfg?.TargetMods) { sectionCfg.TargetMods.splice(i, 1); updateSecModList(); }
+}
+
+function updateSecModList() {
+    const list = document.getElementById('sec-mod-list');
+    if (!list) return;
+    if (!sectionCfg?.TargetMods || sectionCfg.TargetMods.length === 0) {
+        list.innerHTML = `<span class="empty-msg">${t('empty.noMods')}</span>`;
+        return;
+    }
+    list.innerHTML = sectionCfg.TargetMods.map((mod, i) =>
+        `<div class="mod-entry"><span class="mod-desc">${mod.Description}</span><button class="mod-remove" onclick="secRemoveMod(${i})">x</button></div>`
+    ).join('');
 }
 
 // ===== Toast Notifications =====

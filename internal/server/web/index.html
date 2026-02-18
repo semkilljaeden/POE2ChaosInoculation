@@ -32,9 +32,11 @@
 
     <nav>
         <button class="tab-btn active" data-tab="dashboard" data-i18n="tab.dashboard">Dashboard</button>
-        <button class="tab-btn" data-tab="wizard" data-i18n="tab.wizard">Wizard</button>
         <button class="tab-btn" data-tab="config" data-i18n="tab.config">Config</button>
     </nav>
+
+    <!-- Global Capture Countdown (fixed overlay, works in any context) -->
+    <div id="capture-countdown" class="countdown hidden"></div>
 
     <!-- Dashboard Tab -->
     <div id="tab-dashboard" class="tab-content active">
@@ -130,242 +132,239 @@
         </div>
     </div>
 
-    <!-- Wizard Tab -->
-    <div id="tab-wizard" class="tab-content">
-        <div class="wizard-container">
-            <div class="wizard-steps">
-                <div class="step-indicator">
-                    <span class="step-dot active" data-step="1">1</span>
-                    <span class="step-dot" data-step="2">2</span>
-                    <span class="step-dot" data-step="3">3</span>
-                    <span class="step-dot" data-step="4">4</span>
-                    <span class="step-dot" data-step="5">5</span>
-                    <span class="step-dot" data-step="6">6</span>
-                    <span class="step-dot" data-step="7">7</span>
-                    <span class="step-dot" data-step="8">8</span>
-                </div>
-
-                <!-- Step 1: Load or Fresh -->
-                <div id="wizard-step-1" class="wizard-step active">
-                    <h3 data-i18n="wiz.step1.title">Step 1: Configuration</h3>
-                    <p data-i18n="wiz.step1.desc">Load existing config or start fresh?</p>
-                    <div class="wizard-actions">
-                        <button class="btn btn-primary" onclick="wizardLoadConfig()" data-i18n="wiz.step1.load">Load Existing</button>
-                        <button class="btn" onclick="wizardFresh()" data-i18n="wiz.step1.fresh">Start Fresh</button>
+    <!-- Wizard Modal -->
+    <div id="wizard-modal" class="modal-overlay">
+        <div class="modal-content">
+            <button class="modal-close" onclick="closeWizardModal()">&#10005;</button>
+            <div class="wizard-container">
+                <div class="wizard-steps">
+                    <div class="step-indicator">
+                        <span class="step-dot active" data-step="1">1</span>
+                        <span class="step-dot" data-step="2">2</span>
+                        <span class="step-dot" data-step="3">3</span>
+                        <span class="step-dot" data-step="4">4</span>
+                        <span class="step-dot" data-step="5">5</span>
+                        <span class="step-dot" data-step="6">6</span>
+                        <span class="step-dot" data-step="7">7</span>
+                        <span class="step-dot" data-step="8">8</span>
                     </div>
-                    <div id="wizard-config-status"></div>
-                </div>
 
-                <!-- Step 2: Backpack Grid -->
-                <div id="wizard-step-2" class="wizard-step">
-                    <h3 data-i18n="wiz.step2.title">Step 2: Backpack Grid</h3>
-                    <p data-i18n="wiz.step2.desc">Capture the top-left and bottom-right corners of your backpack grid (5 rows x 12 columns).</p>
-                    <div class="capture-group">
-                        <div class="capture-item">
-                            <label data-i18n="wiz.topLeft">Top-Left Corner:</label>
-                            <span id="wiz-grid-tl" class="capture-value" data-i18n="wiz.notSet">Not set</span>
-                            <button class="btn btn-small" onclick="wizardCapture('grid-tl')" data-i18n="btn.capture">Capture</button>
+                    <!-- Step 1: Load or Fresh -->
+                    <div id="wizard-step-1" class="wizard-step active">
+                        <h3 data-i18n="wiz.step1.title">Step 1: Configuration</h3>
+                        <p data-i18n="wiz.step1.desc">Load existing config or start fresh?</p>
+                        <div class="wizard-actions">
+                            <button class="btn btn-primary" onclick="wizardLoadConfig()" data-i18n="wiz.step1.load">Load Existing</button>
+                            <button class="btn" onclick="wizardFresh()" data-i18n="wiz.step1.fresh">Start Fresh</button>
                         </div>
-                        <div class="capture-item">
-                            <label data-i18n="wiz.bottomRight">Bottom-Right Corner:</label>
-                            <span id="wiz-grid-br" class="capture-value" data-i18n="wiz.notSet">Not set</span>
-                            <button class="btn btn-small" onclick="wizardCapture('grid-br')" data-i18n="btn.capture">Capture</button>
-                        </div>
+                        <div id="wizard-config-status"></div>
                     </div>
-                    <div id="capture-countdown" class="countdown hidden"></div>
-                    <div class="wizard-nav">
-                        <button class="btn" onclick="wizardPrev()" data-i18n="btn.back">Back</button>
-                        <button class="btn btn-primary" onclick="wizardNext()" data-i18n="btn.next">Next</button>
-                    </div>
-                </div>
 
-                <!-- Step 3: Chaos Orb -->
-                <div id="wizard-step-3" class="wizard-step">
-                    <h3 data-i18n="wiz.step3.title">Step 3: Chaos Orb Position</h3>
-                    <p data-i18n="wiz.step3.desc">Capture where the chaos orb is in your stash.</p>
-                    <div class="capture-group">
-                        <div class="capture-item">
-                            <label data-i18n="wiz.chaosOrb">Chaos Orb:</label>
-                            <span id="wiz-chaos" class="capture-value" data-i18n="wiz.notSet">Not set</span>
-                            <button class="btn btn-small" onclick="wizardCapture('chaos')" data-i18n="btn.capture">Capture</button>
+                    <!-- Step 2: Backpack Grid -->
+                    <div id="wizard-step-2" class="wizard-step">
+                        <h3 data-i18n="wiz.step2.title">Step 2: Backpack Grid</h3>
+                        <p data-i18n="wiz.step2.desc">Capture the top-left and bottom-right corners of your backpack grid (5 rows x 12 columns).</p>
+                        <div class="capture-group">
+                            <div class="capture-item">
+                                <label data-i18n="wiz.topLeft">Top-Left Corner:</label>
+                                <span id="wiz-grid-tl" class="capture-value" data-i18n="wiz.notSet">Not set</span>
+                                <button class="btn btn-small" onclick="wizardCapture('grid-tl')" data-i18n="btn.capture">Capture</button>
+                            </div>
+                            <div class="capture-item">
+                                <label data-i18n="wiz.bottomRight">Bottom-Right Corner:</label>
+                                <span id="wiz-grid-br" class="capture-value" data-i18n="wiz.notSet">Not set</span>
+                                <button class="btn btn-small" onclick="wizardCapture('grid-br')" data-i18n="btn.capture">Capture</button>
+                            </div>
+                        </div>
+                        <div class="wizard-nav">
+                            <button class="btn" onclick="wizardPrev()" data-i18n="btn.back">Back</button>
+                            <button class="btn btn-primary" onclick="wizardNext()" data-i18n="btn.next">Next</button>
                         </div>
                     </div>
-                    <div class="wizard-nav">
-                        <button class="btn" onclick="wizardPrev()" data-i18n="btn.back">Back</button>
-                        <button class="btn btn-primary" onclick="wizardNext()" data-i18n="btn.next">Next</button>
-                    </div>
-                </div>
 
-                <!-- Step 4: Item Dimensions -->
-                <div id="wizard-step-4" class="wizard-step">
-                    <h3 data-i18n="wiz.step4.title">Step 4: Item Dimensions</h3>
-                    <p data-i18n="wiz.step4.desc">How many grid cells does the item occupy?</p>
-                    <div class="form-group">
-                        <label data-i18n="wiz.width">Width (cells):</label>
-                        <select id="wiz-item-width">
-                            <option value="1" selected>1</option>
-                            <option value="2">2</option>
-                            <option value="3">3</option>
-                            <option value="4">4</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label data-i18n="wiz.height">Height (cells):</label>
-                        <select id="wiz-item-height">
-                            <option value="1" selected>1</option>
-                            <option value="2">2</option>
-                            <option value="3">3</option>
-                            <option value="4">4</option>
-                            <option value="5">5</option>
-                        </select>
-                    </div>
-                    <div class="wizard-nav">
-                        <button class="btn" onclick="wizardPrev()" data-i18n="btn.back">Back</button>
-                        <button class="btn btn-primary" onclick="wizardNext()" data-i18n="btn.next">Next</button>
-                    </div>
-                </div>
-
-                <!-- Step 5: Batch Areas -->
-                <div id="wizard-step-5" class="wizard-step">
-                    <h3 data-i18n="wiz.step5.title">Step 5: Batch Crafting Areas</h3>
-                    <p data-i18n="wiz.step5.desc">Specify workbench, pending area, and result area positions (in grid cell coordinates row, col).</p>
-
-                    <div class="batch-config">
-                        <fieldset>
-                            <legend data-i18n="wiz.workbench">Workbench</legend>
-                            <div class="form-row">
-                                <div class="form-group">
-                                    <label data-i18n="wiz.row">Row (0-4):</label>
-                                    <input type="number" id="wiz-wb-row" min="0" max="4" value="0">
-                                </div>
-                                <div class="form-group">
-                                    <label data-i18n="wiz.col">Col (0-11):</label>
-                                    <input type="number" id="wiz-wb-col" min="0" max="11" value="0">
-                                </div>
+                    <!-- Step 3: Chaos Orb -->
+                    <div id="wizard-step-3" class="wizard-step">
+                        <h3 data-i18n="wiz.step3.title">Step 3: Chaos Orb Position</h3>
+                        <p data-i18n="wiz.step3.desc">Capture where the chaos orb is in your stash.</p>
+                        <div class="capture-group">
+                            <div class="capture-item">
+                                <label data-i18n="wiz.chaosOrb">Chaos Orb:</label>
+                                <span id="wiz-chaos" class="capture-value" data-i18n="wiz.notSet">Not set</span>
+                                <button class="btn btn-small" onclick="wizardCapture('chaos')" data-i18n="btn.capture">Capture</button>
                             </div>
-                        </fieldset>
-
-                        <fieldset>
-                            <legend data-i18n="wiz.pendingArea">Pending Area</legend>
-                            <div class="form-row">
-                                <div class="form-group">
-                                    <label data-i18n="wiz.topLeftRow">Top-Left Row:</label>
-                                    <input type="number" id="wiz-pend-row" min="0" max="4" value="0">
-                                </div>
-                                <div class="form-group">
-                                    <label data-i18n="wiz.topLeftCol">Top-Left Col:</label>
-                                    <input type="number" id="wiz-pend-col" min="0" max="11" value="0">
-                                </div>
-                            </div>
-                            <div class="form-row">
-                                <div class="form-group">
-                                    <label data-i18n="wiz.width">Width (cells):</label>
-                                    <input type="number" id="wiz-pend-w" min="1" max="12" value="4">
-                                </div>
-                                <div class="form-group">
-                                    <label data-i18n="wiz.height">Height (cells):</label>
-                                    <input type="number" id="wiz-pend-h" min="1" max="5" value="5">
-                                </div>
-                            </div>
-                        </fieldset>
-
-                        <fieldset>
-                            <legend data-i18n="wiz.resultArea">Result Area</legend>
-                            <div class="form-row">
-                                <div class="form-group">
-                                    <label data-i18n="wiz.topLeftRow">Top-Left Row:</label>
-                                    <input type="number" id="wiz-res-row" min="0" max="4" value="0">
-                                </div>
-                                <div class="form-group">
-                                    <label data-i18n="wiz.topLeftCol">Top-Left Col:</label>
-                                    <input type="number" id="wiz-res-col" min="0" max="11" value="8">
-                                </div>
-                            </div>
-                            <div class="form-row">
-                                <div class="form-group">
-                                    <label data-i18n="wiz.width">Width (cells):</label>
-                                    <input type="number" id="wiz-res-w" min="1" max="12" value="4">
-                                </div>
-                                <div class="form-group">
-                                    <label data-i18n="wiz.height">Height (cells):</label>
-                                    <input type="number" id="wiz-res-h" min="1" max="5" value="5">
-                                </div>
-                            </div>
-                        </fieldset>
-                    </div>
-                    <div class="wizard-nav">
-                        <button class="btn" onclick="wizardPrev()" data-i18n="btn.back">Back</button>
-                        <button class="btn btn-primary" onclick="wizardNext()" data-i18n="btn.next">Next</button>
-                    </div>
-                </div>
-
-                <!-- Step 6: Tooltip Area -->
-                <div id="wizard-step-6" class="wizard-step">
-                    <h3 data-i18n="wiz.step6.title">Step 6: Tooltip Area</h3>
-                    <p data-i18n="wiz.step6.desc">Hover over an item to show the tooltip, then capture its corners.</p>
-                    <div class="capture-group">
-                        <div class="capture-item">
-                            <label data-i18n="wiz.topLeft">Top-Left Corner:</label>
-                            <span id="wiz-tooltip-tl" class="capture-value" data-i18n="wiz.notSet">Not set</span>
-                            <button class="btn btn-small" onclick="wizardCapture('tooltip-tl')" data-i18n="btn.capture">Capture</button>
                         </div>
-                        <div class="capture-item">
-                            <label data-i18n="wiz.bottomRight">Bottom-Right Corner:</label>
-                            <span id="wiz-tooltip-br" class="capture-value" data-i18n="wiz.notSet">Not set</span>
-                            <button class="btn btn-small" onclick="wizardCapture('tooltip-br')" data-i18n="btn.capture">Capture</button>
+                        <div class="wizard-nav">
+                            <button class="btn" onclick="wizardPrev()" data-i18n="btn.back">Back</button>
+                            <button class="btn btn-primary" onclick="wizardNext()" data-i18n="btn.next">Next</button>
                         </div>
                     </div>
-                    <button class="btn btn-small" onclick="wizardValidateTooltip()" id="btn-validate-tooltip" data-i18n="wiz.validateOCR">Validate OCR</button>
-                    <div id="tooltip-validation-result"></div>
-                    <div class="wizard-nav">
-                        <button class="btn" onclick="wizardPrev()" data-i18n="btn.back">Back</button>
-                        <button class="btn btn-primary" onclick="wizardNext()" data-i18n="btn.next">Next</button>
-                    </div>
-                </div>
 
-                <!-- Step 7: Target Mods -->
-                <div id="wizard-step-7" class="wizard-step">
-                    <h3 data-i18n="wiz.step7.title">Step 7: Target Mods</h3>
-                    <p><span data-i18n="wiz.step7.desc">Select which mods to search for. Format:</span> <code data-i18n="wiz.step7.format">mod_name min_value</code></p>
-                    <div class="mod-templates">
-                        <select id="wiz-mod-template">
-                            <option value="" data-i18n="wiz.quickTemplate">-- Quick Template --</option>
-                        </select>
-                        <input type="number" id="wiz-mod-value" data-i18n-placeholder="wiz.minValue" placeholder="Min value" min="1">
-                        <button class="btn btn-small" onclick="wizardAddModFromTemplate()" data-i18n="btn.add">Add</button>
-                    </div>
-                    <div class="mod-custom">
-                        <input type="text" id="wiz-mod-custom" data-i18n-placeholder="wiz.customPlaceholder" placeholder="e.g. life 80, fire-res 30">
-                        <button class="btn btn-small" onclick="wizardAddModCustom()" data-i18n="wiz.addCustom">Add Custom</button>
-                    </div>
-                    <div id="wiz-mod-list" class="mod-list"></div>
-                    <div class="wizard-nav">
-                        <button class="btn" onclick="wizardPrev()" data-i18n="btn.back">Back</button>
-                        <button class="btn btn-primary" onclick="wizardNext()" data-i18n="btn.next">Next</button>
-                    </div>
-                </div>
-
-                <!-- Step 8: Options & Save -->
-                <div id="wizard-step-8" class="wizard-step">
-                    <h3 data-i18n="wiz.step8.title">Step 8: Options & Review</h3>
-                    <div class="form-group">
-                        <label data-i18n="wiz.chaosPerRound">Chaos Orbs per Round:</label>
-                        <input type="number" id="wiz-chaos-per-round" min="1" max="1000" value="10">
-                    </div>
-                    <div class="form-group checkbox-group">
-                        <label><input type="checkbox" id="wiz-debug"> <span data-i18n="wiz.ocrDebug">Enable OCR debug logging</span></label>
-                    </div>
-                    <div class="form-group checkbox-group">
-                        <label><input type="checkbox" id="wiz-snapshots"> <span data-i18n="wiz.saveSnapshots">Save all snapshots</span></label>
+                    <!-- Step 4: Item Dimensions -->
+                    <div id="wizard-step-4" class="wizard-step">
+                        <h3 data-i18n="wiz.step4.title">Step 4: Item Dimensions</h3>
+                        <p data-i18n="wiz.step4.desc">How many grid cells does the item occupy?</p>
+                        <div class="form-group">
+                            <label data-i18n="wiz.width">Width (cells):</label>
+                            <select id="wiz-item-width">
+                                <option value="1" selected>1</option>
+                                <option value="2">2</option>
+                                <option value="3">3</option>
+                                <option value="4">4</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label data-i18n="wiz.height">Height (cells):</label>
+                            <select id="wiz-item-height">
+                                <option value="1" selected>1</option>
+                                <option value="2">2</option>
+                                <option value="3">3</option>
+                                <option value="4">4</option>
+                                <option value="5">5</option>
+                            </select>
+                        </div>
+                        <div class="wizard-nav">
+                            <button class="btn" onclick="wizardPrev()" data-i18n="btn.back">Back</button>
+                            <button class="btn btn-primary" onclick="wizardNext()" data-i18n="btn.next">Next</button>
+                        </div>
                     </div>
 
-                    <h4 data-i18n="wiz.review">Review</h4>
-                    <div id="wizard-review" class="review-box"></div>
+                    <!-- Step 5: Batch Areas -->
+                    <div id="wizard-step-5" class="wizard-step">
+                        <h3 data-i18n="wiz.step5.title">Step 5: Batch Crafting Areas</h3>
+                        <p data-i18n="wiz.step5.desc">Specify workbench, pending area, and result area positions (in grid cell coordinates row, col).</p>
+                        <div class="batch-config">
+                            <fieldset>
+                                <legend data-i18n="wiz.workbench">Workbench</legend>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label data-i18n="wiz.row">Row (0-4):</label>
+                                        <input type="number" id="wiz-wb-row" min="0" max="4" value="0">
+                                    </div>
+                                    <div class="form-group">
+                                        <label data-i18n="wiz.col">Col (0-11):</label>
+                                        <input type="number" id="wiz-wb-col" min="0" max="11" value="0">
+                                    </div>
+                                </div>
+                            </fieldset>
+                            <fieldset>
+                                <legend data-i18n="wiz.pendingArea">Pending Area</legend>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label data-i18n="wiz.topLeftRow">Top-Left Row:</label>
+                                        <input type="number" id="wiz-pend-row" min="0" max="4" value="0">
+                                    </div>
+                                    <div class="form-group">
+                                        <label data-i18n="wiz.topLeftCol">Top-Left Col:</label>
+                                        <input type="number" id="wiz-pend-col" min="0" max="11" value="0">
+                                    </div>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label data-i18n="wiz.width">Width (cells):</label>
+                                        <input type="number" id="wiz-pend-w" min="1" max="12" value="4">
+                                    </div>
+                                    <div class="form-group">
+                                        <label data-i18n="wiz.height">Height (cells):</label>
+                                        <input type="number" id="wiz-pend-h" min="1" max="5" value="5">
+                                    </div>
+                                </div>
+                            </fieldset>
+                            <fieldset>
+                                <legend data-i18n="wiz.resultArea">Result Area</legend>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label data-i18n="wiz.topLeftRow">Top-Left Row:</label>
+                                        <input type="number" id="wiz-res-row" min="0" max="4" value="0">
+                                    </div>
+                                    <div class="form-group">
+                                        <label data-i18n="wiz.topLeftCol">Top-Left Col:</label>
+                                        <input type="number" id="wiz-res-col" min="0" max="11" value="8">
+                                    </div>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label data-i18n="wiz.width">Width (cells):</label>
+                                        <input type="number" id="wiz-res-w" min="1" max="12" value="4">
+                                    </div>
+                                    <div class="form-group">
+                                        <label data-i18n="wiz.height">Height (cells):</label>
+                                        <input type="number" id="wiz-res-h" min="1" max="5" value="5">
+                                    </div>
+                                </div>
+                            </fieldset>
+                        </div>
+                        <div class="wizard-nav">
+                            <button class="btn" onclick="wizardPrev()" data-i18n="btn.back">Back</button>
+                            <button class="btn btn-primary" onclick="wizardNext()" data-i18n="btn.next">Next</button>
+                        </div>
+                    </div>
 
-                    <div class="wizard-nav">
-                        <button class="btn" onclick="wizardPrev()" data-i18n="btn.back">Back</button>
-                        <button class="btn btn-primary" onclick="wizardSave()" data-i18n="wiz.saveConfig">Save Config</button>
-                        <button class="btn btn-start" onclick="wizardSaveAndStart()" data-i18n="wiz.saveAndStart">Save & Start</button>
+                    <!-- Step 6: Tooltip Area -->
+                    <div id="wizard-step-6" class="wizard-step">
+                        <h3 data-i18n="wiz.step6.title">Step 6: Tooltip Area</h3>
+                        <p data-i18n="wiz.step6.desc">Hover over an item to show the tooltip, then capture its corners.</p>
+                        <div class="capture-group">
+                            <div class="capture-item">
+                                <label data-i18n="wiz.topLeft">Top-Left Corner:</label>
+                                <span id="wiz-tooltip-tl" class="capture-value" data-i18n="wiz.notSet">Not set</span>
+                                <button class="btn btn-small" onclick="wizardCapture('tooltip-tl')" data-i18n="btn.capture">Capture</button>
+                            </div>
+                            <div class="capture-item">
+                                <label data-i18n="wiz.bottomRight">Bottom-Right Corner:</label>
+                                <span id="wiz-tooltip-br" class="capture-value" data-i18n="wiz.notSet">Not set</span>
+                                <button class="btn btn-small" onclick="wizardCapture('tooltip-br')" data-i18n="btn.capture">Capture</button>
+                            </div>
+                        </div>
+                        <button class="btn btn-small" onclick="wizardValidateTooltip()" id="btn-validate-tooltip" data-i18n="wiz.validateOCR">Validate OCR</button>
+                        <div id="tooltip-validation-result"></div>
+                        <div class="wizard-nav">
+                            <button class="btn" onclick="wizardPrev()" data-i18n="btn.back">Back</button>
+                            <button class="btn btn-primary" onclick="wizardNext()" data-i18n="btn.next">Next</button>
+                        </div>
+                    </div>
+
+                    <!-- Step 7: Target Mods -->
+                    <div id="wizard-step-7" class="wizard-step">
+                        <h3 data-i18n="wiz.step7.title">Step 7: Target Mods</h3>
+                        <p><span data-i18n="wiz.step7.desc">Select which mods to search for. Format:</span> <code data-i18n="wiz.step7.format">mod_name min_value</code></p>
+                        <div class="mod-templates">
+                            <select id="wiz-mod-template">
+                                <option value="" data-i18n="wiz.quickTemplate">-- Quick Template --</option>
+                            </select>
+                            <input type="number" id="wiz-mod-value" data-i18n-placeholder="wiz.minValue" placeholder="Min value" min="1">
+                            <button class="btn btn-small" onclick="wizardAddModFromTemplate()" data-i18n="btn.add">Add</button>
+                        </div>
+                        <div class="mod-custom">
+                            <input type="text" id="wiz-mod-custom" data-i18n-placeholder="wiz.customPlaceholder" placeholder="e.g. life 80, fire-res 30">
+                            <button class="btn btn-small" onclick="wizardAddModCustom()" data-i18n="wiz.addCustom">Add Custom</button>
+                        </div>
+                        <div id="wiz-mod-list" class="mod-list"></div>
+                        <div class="wizard-nav">
+                            <button class="btn" onclick="wizardPrev()" data-i18n="btn.back">Back</button>
+                            <button class="btn btn-primary" onclick="wizardNext()" data-i18n="btn.next">Next</button>
+                        </div>
+                    </div>
+
+                    <!-- Step 8: Options & Save -->
+                    <div id="wizard-step-8" class="wizard-step">
+                        <h3 data-i18n="wiz.step8.title">Step 8: Options & Review</h3>
+                        <div class="form-group">
+                            <label data-i18n="wiz.chaosPerRound">Chaos Orbs per Round:</label>
+                            <input type="number" id="wiz-chaos-per-round" min="1" max="1000" value="10">
+                        </div>
+                        <div class="form-group checkbox-group">
+                            <label><input type="checkbox" id="wiz-debug"> <span data-i18n="wiz.ocrDebug">Enable OCR debug logging</span></label>
+                        </div>
+                        <div class="form-group checkbox-group">
+                            <label><input type="checkbox" id="wiz-snapshots"> <span data-i18n="wiz.saveSnapshots">Save all snapshots</span></label>
+                        </div>
+                        <h4 data-i18n="wiz.review">Review</h4>
+                        <div id="wizard-review" class="review-box"></div>
+                        <div class="wizard-nav">
+                            <button class="btn" onclick="wizardPrev()" data-i18n="btn.back">Back</button>
+                            <button class="btn btn-primary" onclick="wizardSave()" data-i18n="wiz.saveConfig">Save Config</button>
+                            <button class="btn btn-start" onclick="wizardSaveAndStart()" data-i18n="wiz.saveAndStart">Save & Start</button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -378,7 +377,7 @@
             <h2 data-i18n="cfg.title">Current Configuration</h2>
             <div class="config-actions">
                 <button class="btn btn-small" onclick="loadAndShowConfig()" data-i18n="cfg.reload">Reload</button>
-                <button class="btn btn-small btn-primary" onclick="switchTab('wizard')" data-i18n="cfg.editWizard">Edit in Wizard</button>
+                <button class="btn btn-small btn-primary" onclick="openWizardModal()" data-i18n="cfg.openWizard">Setup Wizard</button>
             </div>
             <div id="config-display" class="config-formatted">
                 <p class="empty-msg" data-i18n="empty.loading">Loading...</p>
