@@ -2,6 +2,8 @@
 
 > Automate Chaos Orb crafting in Path of Exile 2 with OCR-powered mod detection and a browser-based GUI.
 
+English | [简体中文](README_zh-CN.md)
+
 ---
 
 ## Features
