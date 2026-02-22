@@ -3,3 +3,4 @@ snapshots/
 crafting_report_*.txt
 tesseract-dev/
 .vscode/
+dist/
