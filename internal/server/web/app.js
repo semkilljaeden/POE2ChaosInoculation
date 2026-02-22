@@ -316,6 +316,37 @@ function t(key, params) {
     return text;
 }
 
+// ===== Audio =====
+let _audioCtx = null;
+function _getAudioCtx() {
+    if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (_audioCtx.state === 'suspended') _audioCtx.resume();
+    return _audioCtx;
+}
+
+// Ascending C-major arpeggio: C5 E5 G5 C6 — recognizable "item found" fanfare
+function playSuccessSound() {
+    try {
+        const ctx = _getAudioCtx();
+        const freqs  = [523.25, 659.25, 783.99, 1046.50]; // C5 E5 G5 C6
+        const offset = 0.13; // seconds between notes
+        freqs.forEach((freq, i) => {
+            const osc  = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            osc.type = 'triangle';
+            osc.frequency.value = freq;
+            const t0 = ctx.currentTime + i * offset;
+            gain.gain.setValueAtTime(0, t0);
+            gain.gain.linearRampToValueAtTime(0.28, t0 + 0.02);
+            gain.gain.exponentialRampToValueAtTime(0.001, t0 + 0.35);
+            osc.start(t0);
+            osc.stop(t0 + 0.36);
+        });
+    } catch (e) { /* audio not supported */ }
+}
+
 function applyTranslations() {
     document.querySelectorAll('[data-i18n]').forEach(el => {
         const key = el.getAttribute('data-i18n');
@@ -403,6 +434,7 @@ function handleWSMessage(msg) {
             break;
         case 'tooltip_captured':
             refreshTooltipImage();
+            refreshSnapshot();
             break;
         case 'mods_tracked':
             updateModsTracked(msg.data);
@@ -556,6 +588,7 @@ function updateModStatsTable(modStats, totalRolls) {
 }
 
 function handleTargetFound(data) {
+    playSuccessSound();
     showToast(t('toast.targetFound', { mod: data.modName, value: data.value }), 'success');
 }
 
